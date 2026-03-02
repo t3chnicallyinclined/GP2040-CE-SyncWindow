@@ -238,41 +238,70 @@ void GP2040::deinitializeStandardGpio() {
 }
 
 /**
- * @brief Populate a debounced version of gpio_get_all suitable for use for buttons.
+ * @brief Sync-window debounce for simultaneous button presses.
  *
- * For GPIO that are assigned to buttons (based on GpioMappings, see GP2040::initializeStandardGpio),
- * we can centralize their debouncing here and provide access to it to button users.
+ * Only NEW presses (0->1) are buffered in a sync window so near-simultaneous
+ * presses (e.g. LP+HP) land on the same frame. Releases (1->0) and holds
+ * pass through instantly — no added latency for charge moves or held buttons.
  *
- * For ease of use this provides the mask bitwise NOTed so that callers don't have to. To avoid misuse
- * and to simplify this method, non-button GPIO IS NOT PRESENT in this result. Use gpio_get_all directly
- * instead, if you don't want debounced data.
+ * The sync window duration is controlled by the debounceDelay slider in the
+ * web UI (in ms). Set to 0 for raw passthrough, ~8ms for fighting games.
  */
 void GP2040::debounceGpioGetAll() {
-	Mask_t raw_gpio = ~gpio_get_all();
-	Gamepad* gamepad = Storage::getInstance().GetGamepad();
-	// return if state isn't different than the actual
-	if (gamepad->debouncedGpio == (raw_gpio & buttonGpios)) return;
+    Mask_t raw = ~gpio_get_all() & buttonGpios;
+    Gamepad* gamepad = Storage::getInstance().GetGamepad();
+    uint32_t now = getMillis();
 
-	uint32_t debounceDelay = Storage::getInstance().getGamepadOptions().debounceDelay;
-	// abort if no delay is configured
-	if (debounceDelay == 0) {
-		gamepad->debouncedGpio = raw_gpio;
-		return;
-	}
+    // CONFIG-MODE: always passthrough so Web-UI works
+    if (DriverManager::getInstance().isConfigMode()) {
+        gamepad->debouncedGpio = raw;
+        return;
+    }
 
-	uint32_t now = getMillis();
-	// check each button use case GPIO for state
-	for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
-		Mask_t pin_mask = 1 << pin;
-		if (buttonGpios & pin_mask) {
-			// Allow debouncer to change state if button state changed and debounce delay threshold met
-			if ((gamepad->debouncedGpio & pin_mask) != \
-					(raw_gpio & pin_mask) && ((now - gpioDebounceTime[pin]) > debounceDelay)) {
-				gamepad->debouncedGpio ^= pin_mask;
-				gpioDebounceTime[pin] = now;
-			}
-		}
-	}
+    // read sync window (ms) from UI slider
+    uint32_t syncWindowMs = Storage::getInstance()
+                                .getGamepadOptions()
+                                .debounceDelay;
+
+    // slider = 0: raw passthrough, no sync
+    if (syncWindowMs == 0) {
+        gamepad->debouncedGpio = raw;
+        return;
+    }
+
+    static bool     sync_pending = false;
+    static uint32_t sync_start   = 0;
+    static Mask_t   sync_new     = 0;
+
+    Mask_t prev          = gamepad->debouncedGpio;
+    Mask_t just_pressed  = raw & ~prev & ~sync_new;  // truly new 0->1
+    Mask_t just_released = prev & ~raw;               // committed bits going 1->0
+
+    // 1) releases always apply immediately (critical for charge moves)
+    if (just_released) {
+        gamepad->debouncedGpio &= ~just_released;
+    }
+
+    // 2) drop any pending presses whose button was released before commit
+    sync_new &= raw;
+
+    // 3) accumulate new presses into the sync window
+    if (just_pressed) {
+        if (!sync_pending) {
+            sync_pending = true;
+            sync_start   = now;
+            sync_new     = just_pressed;
+        } else {
+            sync_new |= just_pressed;
+        }
+    }
+
+    // 4) commit all buffered presses when window expires
+    if (sync_pending && (now - sync_start) >= syncWindowMs) {
+        gamepad->debouncedGpio |= sync_new;
+        sync_pending = false;
+        sync_new     = 0;
+    }
 }
 
 void GP2040::run() {
