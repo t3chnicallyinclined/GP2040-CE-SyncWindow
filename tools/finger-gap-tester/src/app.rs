@@ -149,7 +149,7 @@ fn draw_gap_tester(ctx: &egui::Context, stats: &GapStats, log: &[GapLogEntry]) {
             ui.heading("Attempt Log");
             ui.separator();
             ScrollArea::vertical()
-                .stick_to_bottom(true)
+                .auto_shrink(false)
                 .show(ui, |ui| {
                     for entry in log.iter().rev() {
                         ui.monospace(format!(
@@ -161,6 +161,7 @@ fn draw_gap_tester(ctx: &egui::Context, stats: &GapStats, log: &[GapLogEntry]) {
                             entry.running_avg,
                         ));
                     }
+                    ui.scroll_to_cursor(Some(egui::Align::TOP));
                 });
         });
 
@@ -296,7 +297,7 @@ fn draw_button_monitor(ctx: &egui::Context, monitor: &ButtonMonitor) {
             ui.heading("Event Log");
             ui.separator();
             ScrollArea::vertical()
-                .stick_to_bottom(true)
+                .auto_shrink(false)
                 .show(ui, |ui| {
                     for entry in monitor.event_log().iter().rev() {
                         ui.horizontal(|ui| {
@@ -314,6 +315,7 @@ fn draw_button_monitor(ctx: &egui::Context, monitor: &ButtonMonitor) {
                             );
                         });
                     }
+                    ui.scroll_to_cursor(Some(egui::Align::TOP));
                 });
         });
 
