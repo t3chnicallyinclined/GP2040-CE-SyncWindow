@@ -1,5 +1,5 @@
 use gilrs::{Button, EventType, GamepadId, Gilrs};
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 const PAIR_WINDOW_MS: f64 = 50.0;
 
@@ -19,10 +19,7 @@ struct PendingPress {
     button: Button,
     #[allow(dead_code)]
     gamepad_id: GamepadId,
-    /// OS-level timestamp from gilrs event — accurate sub-ms gap measurement.
-    event_time: SystemTime,
-    /// Wall clock for expiry check only.
-    wall_time: Instant,
+    timestamp: Instant,
 }
 
 pub struct GamepadInput {
@@ -39,7 +36,10 @@ impl GamepadInput {
         })
     }
 
-    /// Drain all pending gilrs events. Returns detected pair (if any) and all raw events.
+    /// Poll gilrs events. Processes only ONE ButtonPressed per call so that
+    /// consecutive presses are naturally spaced across frames (~1ms apart via
+    /// request_repaint_after). This gives real wall-clock timing between presses
+    /// instead of draining the whole batch in nanoseconds.
     pub fn poll(&mut self) -> (Option<ButtonPair>, Vec<InputEvent>) {
         let mut pair = None;
         let mut events = Vec::new();
@@ -48,24 +48,19 @@ impl GamepadInput {
             match event.event {
                 EventType::ButtonPressed(button, _) => {
                     events.push(InputEvent::Pressed(button));
+                    let now = Instant::now();
 
                     match self.pending.take() {
                         None => {
                             self.pending = Some(PendingPress {
                                 button,
                                 gamepad_id: event.id,
-                                event_time: event.time,
-                                wall_time: Instant::now(),
+                                timestamp: now,
                             });
                         }
                         Some(pending) => {
-                            // Use OS-level event timestamps for accurate gap
-                            let gap_ms = event
-                                .time
-                                .duration_since(pending.event_time)
-                                .unwrap_or_default()
-                                .as_secs_f64()
-                                * 1000.0;
+                            let gap_ms =
+                                pending.timestamp.elapsed().as_secs_f64() * 1000.0;
 
                             if gap_ms <= PAIR_WINDOW_MS {
                                 pair = Some(ButtonPair {
@@ -77,12 +72,14 @@ impl GamepadInput {
                                 self.pending = Some(PendingPress {
                                     button,
                                     gamepad_id: event.id,
-                                    event_time: event.time,
-                                    wall_time: Instant::now(),
+                                    timestamp: now,
                                 });
                             }
                         }
                     }
+                    // Stop after one press — remaining events stay in gilrs
+                    // buffer and get consumed next frame for accurate timing.
+                    break;
                 }
                 EventType::ButtonReleased(button, _) => {
                     events.push(InputEvent::Released(button));
@@ -93,7 +90,7 @@ impl GamepadInput {
 
         // Expire stale pending press
         if let Some(ref pending) = self.pending {
-            if pending.wall_time.elapsed().as_secs_f64() * 1000.0 > PAIR_WINDOW_MS {
+            if pending.timestamp.elapsed().as_secs_f64() * 1000.0 > PAIR_WINDOW_MS {
                 self.pending = None;
             }
         }
