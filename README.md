@@ -10,6 +10,8 @@ There's a timing problem baked into how button presses travel from your fingers 
 
 This fork of GP2040-CE adds **NOBD** (No OBD) — a tap sync window, a small buffer at the firmware level that groups near-simultaneous button presses so they always arrive together. It's a simple idea: if two buttons are pressed within a few milliseconds of each other, hold both until they can be reported at the same time. That's it.
 
+> **Zero added latency.** Stock GP2040-CE already debounces every input at 5ms. NOBD replaces that debounce with a 5ms sync window — same latency, but now your simultaneous presses are guaranteed to arrive together instead of getting split across USB frames.
+
 ## Demo
 
 See the difference for yourself:
