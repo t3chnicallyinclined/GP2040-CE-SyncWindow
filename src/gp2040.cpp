@@ -260,16 +260,9 @@ void GP2040::debounceGpioGetAll() {
 		return;
 	}
 
-    // Directional inputs bypass the sync window entirely (no buffering delay).
-    // Only attack buttons benefit from simultaneous press grouping.
-    Mask_t dpadPins = gamepad->mapDpadUp->pinMask |
-                      gamepad->mapDpadDown->pinMask |
-                      gamepad->mapDpadLeft->pinMask |
-                      gamepad->mapDpadRight->pinMask;
-    Mask_t buttonRaw = raw_gpio & ~dpadPins;
-
-    // Pass directions straight through
-    gamepad->debouncedGpio = (gamepad->debouncedGpio & ~dpadPins) | (raw_gpio & dpadPins);
+    // All inputs (directions + buttons) go through the sync window.
+    // This ensures direction + button combos (like QCB+KK) arrive together.
+    // Stock GP2040-CE debounced everything at 5ms anyway, so this is equivalent.
 
     static bool     sync_pending = false;
     static uint32_t sync_start   = 0;
@@ -278,7 +271,7 @@ void GP2040::debounceGpioGetAll() {
     uint32_t now = to_ms_since_boot(get_absolute_time());
 
     Mask_t prev          = gamepad->debouncedGpio;
-    Mask_t just_pressed  = buttonRaw & ~prev & ~sync_new;  // truly new 0->1
+    Mask_t just_pressed  = raw_gpio & ~prev & ~sync_new;   // truly new 0->1
     Mask_t just_released = prev & ~raw_gpio;                // committed bits going 1->0
 
     // 1) releases always apply immediately (critical for charge moves)
@@ -286,8 +279,8 @@ void GP2040::debounceGpioGetAll() {
         gamepad->debouncedGpio &= ~just_released;
     }
 
-    // 2) drop any pending presses whose button was released before commit
-    sync_new &= buttonRaw;
+    // 2) drop any pending presses whose input was released before commit
+    sync_new &= raw_gpio;
 
     // 3) accumulate new presses into the sync window
     if (just_pressed) {
