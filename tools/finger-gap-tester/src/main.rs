@@ -1,5 +1,6 @@
 mod app;
 mod input;
+mod monitor;
 mod stats;
 
 use egui::Color32;

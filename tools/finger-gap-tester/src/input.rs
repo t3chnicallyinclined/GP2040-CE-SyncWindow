@@ -9,6 +9,12 @@ pub struct ButtonPair {
     pub gap_ms: f64,
 }
 
+#[derive(Clone)]
+pub enum InputEvent {
+    Pressed(Button),
+    Released(Button),
+}
+
 struct PendingPress {
     button: Button,
     #[allow(dead_code)]
@@ -30,42 +36,49 @@ impl GamepadInput {
         })
     }
 
-    /// Drain all pending gilrs events, return any detected button pair.
-    pub fn poll(&mut self) -> Option<ButtonPair> {
-        let mut result = None;
+    /// Drain all pending gilrs events. Returns detected pair (if any) and all raw events.
+    pub fn poll(&mut self) -> (Option<ButtonPair>, Vec<InputEvent>) {
+        let mut pair = None;
+        let mut events = Vec::new();
 
         while let Some(event) = self.gilrs.next_event() {
-            if let EventType::ButtonPressed(button, _) = event.event {
-                let now = Instant::now();
+            match event.event {
+                EventType::ButtonPressed(button, _) => {
+                    events.push(InputEvent::Pressed(button));
+                    let now = Instant::now();
 
-                match self.pending.take() {
-                    None => {
-                        self.pending = Some(PendingPress {
-                            button,
-                            gamepad_id: event.id,
-                            timestamp: now,
-                        });
-                    }
-                    Some(pending) => {
-                        let gap_ms = pending.timestamp.elapsed().as_secs_f64() * 1000.0;
-
-                        if gap_ms <= PAIR_WINDOW_MS {
-                            result = Some(ButtonPair {
-                                button_a: pending.button,
-                                button_b: button,
-                                gap_ms,
-                            });
-                            // Don't set a new pending - pair consumed
-                        } else {
-                            // Too far apart, this press becomes the new pending
+                    match self.pending.take() {
+                        None => {
                             self.pending = Some(PendingPress {
                                 button,
                                 gamepad_id: event.id,
                                 timestamp: now,
                             });
                         }
+                        Some(pending) => {
+                            let gap_ms =
+                                pending.timestamp.elapsed().as_secs_f64() * 1000.0;
+
+                            if gap_ms <= PAIR_WINDOW_MS {
+                                pair = Some(ButtonPair {
+                                    button_a: pending.button,
+                                    button_b: button,
+                                    gap_ms,
+                                });
+                            } else {
+                                self.pending = Some(PendingPress {
+                                    button,
+                                    gamepad_id: event.id,
+                                    timestamp: now,
+                                });
+                            }
+                        }
                     }
                 }
+                EventType::ButtonReleased(button, _) => {
+                    events.push(InputEvent::Released(button));
+                }
+                _ => {}
             }
         }
 
@@ -76,7 +89,7 @@ impl GamepadInput {
             }
         }
 
-        result
+        (pair, events)
     }
 
     pub fn connected_gamepad_name(&self) -> Option<String> {
@@ -86,6 +99,7 @@ impl GamepadInput {
             .map(|(_, gp)| gp.name().to_string())
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.gilrs.gamepads().next().is_some()
     }
