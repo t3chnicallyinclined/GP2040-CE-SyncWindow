@@ -124,8 +124,19 @@ except KeyboardInterrupt:
                 print(f"    {buckets[i]:2d}-{buckets[i+1]:2d}ms: {counts[i]:3d} ({pct:4.1f}%) {bar}")
 
         print()
-        print(f"  Recommended NOBD slider: {max(5, int(mx) + 2)}ms")
-        print(f"  (covers your slowest gap of {mx:.1f}ms with a little headroom)")
+        import math
+        recommended = max(3, math.ceil(avg) + 1)
+        zero_count = sum(1 for g in gaps if g < 0.1)
+        zero_pct = zero_count / len(gaps) * 100
+
+        if zero_pct > 50:
+            print(f"  *** OBD / MACRO DETECTED ***")
+            print(f"  {zero_pct:.0f}% of presses had 0ms gap — likely OBD or a macro button.")
+            print(f"  Turn off OBD to measure your natural finger gap.")
+            print()
+
+        print(f"  Recommended NOBD slider: {recommended}ms")
+        print(f"  (based on your average gap of {avg:.1f}ms + 1ms headroom)")
 
     print()
     print("=" * 60)

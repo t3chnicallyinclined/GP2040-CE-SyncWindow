@@ -83,13 +83,23 @@ impl GapStats {
         result
     }
 
-    /// Recommended NOBD slider value: max(5, floor(max_gap) + 2)
+    /// Recommended NOBD slider value: max(3, ceil(average) + 1)
     pub fn recommended_nobd(&self) -> u32 {
         if self.gaps.is_empty() {
             return 0;
         }
-        let mx = self.max();
-        5u32.max(mx as u32 + 2)
+        let avg = self.average();
+        3u32.max(avg.ceil() as u32 + 1)
+    }
+
+    /// Percentage of gaps that are effectively zero (< 0.1ms).
+    /// High percentage suggests OBD or a macro button is active.
+    pub fn zero_gap_pct(&self) -> f64 {
+        if self.gaps.is_empty() {
+            return 0.0;
+        }
+        let zero_count = self.gaps.iter().filter(|&&g| g < 0.1).count();
+        zero_count as f64 / self.gaps.len() as f64 * 100.0
     }
 
     pub fn clear(&mut self) {

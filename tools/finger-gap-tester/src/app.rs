@@ -167,6 +167,41 @@ fn draw_gap_tester(ctx: &egui::Context, stats: &GapStats, log: &[GapLogEntry]) {
     egui::CentralPanel::default().show(ctx, |ui| {
         if stats.count() > 0 {
             ui.add_space(8.0);
+
+            // OBD / macro detection warning
+            let zero_pct = stats.zero_gap_pct();
+            if zero_pct > 50.0 {
+                egui::Frame::new()
+                    .inner_margin(12.0)
+                    .corner_radius(8.0)
+                    .stroke(egui::Stroke::new(2.0, YELLOW))
+                    .fill(Color32::from_rgb(40, 35, 15))
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("OBD / MACRO DETECTED")
+                                    .size(16.0)
+                                    .strong()
+                                    .color(YELLOW),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "{:.0}% of your presses have 0ms gap — this looks like OBD or a macro button.",
+                                    zero_pct
+                                ))
+                                .size(13.0)
+                                .color(Color32::GRAY),
+                            );
+                            ui.label(
+                                RichText::new("Turn off OBD to measure your natural finger gap.")
+                                    .size(12.0)
+                                    .color(Color32::GRAY),
+                            );
+                        });
+                    });
+                ui.add_space(4.0);
+            }
+
             egui::Frame::new()
                 .inner_margin(12.0)
                 .corner_radius(8.0)
@@ -186,8 +221,8 @@ fn draw_gap_tester(ctx: &egui::Context, stats: &GapStats, log: &[GapLogEntry]) {
                         );
                         ui.label(
                             RichText::new(format!(
-                                "covers your slowest gap of {:.1}ms + 2ms headroom",
-                                stats.max()
+                                "based on your average gap of {:.1}ms + 1ms headroom",
+                                stats.average()
                             ))
                             .size(12.0)
                             .color(Color32::GRAY),
