@@ -151,6 +151,18 @@ Edit `www/src/Locales/en/SettingsPage.jsx` — find the debounce delay translati
 
 ---
 
+## Expert Domain Knowledge
+
+For deep context on fighting game mechanics, game engine input systems, and RP2040 firmware internals, see **[`docs/NOBD-EXPERT-CONTEXT.md`](docs/NOBD-EXPERT-CONTEXT.md)**. This covers:
+
+- **Fighting Game Expert** — simultaneous inputs, frame data, OBD debate, platform-specific input behavior (PC, PS4/5, Xbox, Switch, Dreamcast, MiSTer), plinking history, negative edge
+- **Game Dev Expert** — frame boundary problem in detail, input pipelines, sub-frame reading, rollback netcode implications, input priority systems
+- **Firmware Expert** — RP2040 hardware, GPIO reading, switch bounce physics, USB HID reports, SOCD cleaning pipeline, timing functions, config mode, flash storage
+
+Load this file when making decisions that touch game mechanics, input timing, or hardware behavior.
+
+---
+
 ## Release Info
 - **Current release:** v0.7.12-NOBD
 - **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
