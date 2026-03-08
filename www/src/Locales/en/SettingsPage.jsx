@@ -59,6 +59,11 @@ export default {
 	'profile-label': 'Profile',
 	'debounce-delay-label': 'Debounce Delay in milliseconds',
 	'nobd-sync-delay-label': 'NOBD Sync Window in milliseconds (0 = off, stock debounce only)',
+	'input-timing-mode-label': 'Input Timing Mode',
+	'input-timing-stock': 'Stock Debounce',
+	'input-timing-nobd': 'NOBD Sync Window (with Instant Fire)',
+	'input-timing-delay-label': 'Debounce Delay (ms)',
+	'input-timing-window-label': 'Sync Window (ms)',
 	'mini-menu-gamepad-input': 'Use Gamepad Input for Display Mini Menu',
 	'ps4-mode-explanation-text':
 		'PS4 mode allows GP2040-CE to run as an authenticated PS4 controller.',

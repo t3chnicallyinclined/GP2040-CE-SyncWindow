@@ -4,53 +4,50 @@
 
 A fork of GP2040-CE v0.7.12 that adds **NOBD (No OBD)** — a firmware-level sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for fighting game players who need reliable dashes, throw techs, and multi-button inputs without resorting to OBD (One Button Dash) macros.
 
-## The Problem
+**Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
+**Current release:** v0.7.12-nobd-4
+**Boards:** RP2040AdvancedBreakoutBoard, Pico, PicoW, Pico2
 
-When you press LP+HP for a dash, your fingers are naturally 1-3ms apart. USB polls every 1ms. If those two presses land on opposite sides of a USB poll boundary, the game sees them on **different frames** — LP arrives alone, then HP next frame. Result: stray jab instead of dash.
-
-## The Solution
-
-The sync window holds the first press for a configurable number of ms (default 5ms) so the second press can catch up. Both get committed together on the same frame.
-
-**Key property: zero added latency at 5ms.** Stock GP2040-CE already debounces every input at 5ms. NOBD replaces that debounce with a smarter sync window — same total delay, but it groups presses instead of just filtering bounce.
+For anything not NOBD-specific (pin mapping, addons, SOCD, display, USB modes, etc.), refer to the upstream GP2040-CE docs: https://gp2040-ce.info/
 
 ---
 
-## Architecture — Where Things Live
+## Architecture — Where NOBD Lives
 
-### Core Sync Window
-- **`src/gp2040.cpp`** — `debounceGpioGetAll()` (lines ~250-302)
-  - The entire NOBD algorithm lives here
-  - Static state machine: `sync_pending`, `sync_start`, `sync_new`
-  - Releases are instant (never delayed)
-  - All inputs (directions + buttons) go through the window
-  - `debounceDelay == 0` → raw passthrough, no sync
+### Sync Window (`src/gp2040.cpp`)
+- **`syncGpioGetAll()`** (~line 288) — the NOBD algorithm
+  - Static state machine: `sync_pending`, `sync_start_us`, `sync_new`
+  - Reads raw GPIO directly, writes `gamepad->debouncedGpio`
+  - Releases are always instant (never delayed)
+  - Built-in bounce filtering via `sync_new &= raw_buttons` every cycle
+  - **Instant fire:** if 2+ attack buttons accumulate in the window, commit everything immediately
+    - Uses `attacks & (attacks - 1)` bit trick (true when 2+ bits set, single cycle on Cortex-M0+)
+    - `attackButtonGpios` mask = B1-B4, L1-L2, R1-R2 (cached in `setup()` ~line 90)
+    - Commits ALL pending inputs (buttons + directions), not just the attack buttons
 
-### Configuration
-- **`proto/config.proto`** — `debounceDelay` is field 11 in `GamepadOptions`
-- **`src/config_utils.cpp`** — `DEFAULT_DEBOUNCE_DELAY` = 5 (lines ~125-127)
-  - Initialized via `INIT_UNSET_PROPERTY` at line ~302
-- **`www/src/Pages/SettingsPage.jsx`** — Web UI slider (lines ~1693-1706)
-  - `min={0}` `max={5000}`, yup validation: `yup.number().required()`
-  - No server-side clamping — 0 is a valid value
+- **`debounceGpioGetAll()`** (~line 251) — stock GP2040-CE per-pin debounce (unchanged)
 
-### Finger Gap Tester (Rust GUI)
-All in **`tools/finger-gap-tester/`**:
-- `src/main.rs` — Entry point, eframe window, dark theme with teal accent
-- `src/app.rs` — Two-tab UI: Gap Tester + Button Monitor
-- `src/input.rs` — **Dedicated 8kHz polling thread** (not on UI thread). Processes one ButtonPressed per gilrs poll cycle for accurate timestamps. Sends events to UI via mpsc channel.
-- `src/stats.rs` — Gap statistics, histogram, recommendation formula: `max(3, ceil(avg) + 1)`
-- `src/monitor.rs` — Per-button hold duration, repress timing, activation stats
+### Main Loop Dispatch (`src/gp2040.cpp` ~line 360)
+```cpp
+if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
+    syncGpioGetAll();   // NOBD mode
+} else {
+    debounceGpioGetAll(); // Stock mode
+}
+```
+**Mutually exclusive** — they both write `debouncedGpio` and would conflict if both ran.
 
-Dependencies: `eframe` 0.33, `egui` 0.33, `egui_plot` 0.34, `gilrs` 0.11
+### Configuration Pipeline
+| Layer | File | What |
+|-------|------|------|
+| Proto | `proto/config.proto` | `nobdSyncDelay` = field 34 in `GamepadOptions` |
+| Default | `src/config_utils.cpp` | `DEFAULT_NOBD_SYNC_DELAY = 5`, initialized via `INIT_UNSET_PROPERTY` |
+| WebConfig API | `src/webconfig.cpp` | `readDoc`/`writeDoc` for `nobdSyncDelay` |
+| Web UI | `www/src/Pages/SettingsPage.jsx` | Mode dropdown (Stock Debounce / NOBD Sync Window) + value field |
+| Translations | `www/src/Locales/en/SettingsPage.jsx` | Labels for input timing mode controls |
 
-### Finger Gap Tester (Python)
-- **`test_finger_gap.py`** — Lightweight alternative using pygame. Same 50ms pair window, same stats.
-
-### Build System
-- **`build_fw.bat`** — Windows build script (MSVC + Ninja + CMake)
-- Board config: `GP2040_BOARDCONFIG=RP2040AdvancedBreakoutBoard`
-- Output: `build/GP2040-CE-NOBD_0.7.12_RP2040AdvancedBreakoutBoard.uf2`
+### Header
+- **`headers/gp2040.h`** — declares `syncGpioGetAll()`, `attackButtonGpios`, and sync-related members
 
 ---
 
@@ -60,62 +57,76 @@ Dependencies: `eframe` 0.33, `egui` 0.33, `egui_plot` 0.34, `gilrs` 0.11
 1. New press detected (raw_gpio bit goes 0→1)
 2. If no window open: start window, record press in sync_new bitmask
 3. If window already open: accumulate press into sync_new
-4. Every cycle: sync_new &= raw_gpio (drop any press that was released = bounce filtering)
-5. When (now - sync_start) >= debounceDelay: commit sync_new to debouncedGpio
-6. Releases ALWAYS apply immediately (gamepad->debouncedGpio &= ~just_released)
+4. Every cycle: sync_new &= raw_buttons (drop any released press = bounce filtering)
+5. INSTANT FIRE: if 2+ attack buttons in sync_new → commit immediately
+6. Otherwise when (now_us - sync_start_us) >= syncDelay_us → commit sync_new
+7. Releases ALWAYS apply immediately (debouncedGpio &= ~just_released)
 ```
 
-The bounce filtering is key — it's not "wait 5ms and hope bounce settled." The code continuously validates pending presses against actual GPIO state. If a switch bounces off then back on, the momentary off gets caught by step 4.
+**Why no separate debounce needed:** The continuous validation in step 4 filters bounce more robustly than stock debounce's simple timer. By window expiry (3-5ms), switches have settled (bounce is 1-3ms).
 
 ---
 
-## Design Decisions (and why)
+## Web UI
 
-1. **5ms default, not 8ms** — Testing showed natural finger gaps are 1-3ms. 5ms covers virtually everyone. Same as stock debounce = zero added latency.
+The Settings page has a **mode dropdown** + **single value field**:
 
-2. **Directions go through sync window** — Originally bypassed for "zero latency directions." Removed because QCB+KK would desync: direction arrives instant, buttons delayed by window → game sees wrong move.
+| Mode | Value Field | Config Used |
+|------|-------------|-------------|
+| Stock Debounce | Debounce Delay (ms), 0-5000 | `debounceDelay` |
+| NOBD Sync Window | Sync Window (ms), 1-25 | `nobdSyncDelay` |
 
-3. **Releases are instant** — Charge characters (Megaman, Sentinel) need immediate release detection. The sync window only applies to presses.
+Switching to Stock sets `nobdSyncDelay = 0`. Switching to NOBD sets `nobdSyncDelay = 5` (default).
+Both values are always stored in flash — switching modes preserves the other mode's setting.
 
-4. **Input thread at 8kHz** — gilrs on Windows uses XInput (polling API, no event timestamps). Processing all events on the UI thread gave 0ms gaps (tight loop) or ~4ms gaps (frame-rate limited). Dedicated thread with 0.125ms sleep matches Python's accuracy.
-
-5. **Recommendation based on average, not max** — One slow outlier shouldn't inflate the recommendation. `max(3, ceil(avg) + 1)` gives 1ms headroom above typical gap, floor of 3ms.
-
-6. **OBD detection** — If >50% of measured gaps are <0.1ms, the user likely has OBD or a macro button active. Warn them to turn it off for accurate measurement.
+### Changing the UI
+1. Edit `www/src/Pages/SettingsPage.jsx` — the mode dropdown and value field (~line 1692)
+2. Edit `www/src/Locales/en/SettingsPage.jsx` — translation labels
+3. Rebuild: `cd www && npm run build && cd ..`
+4. Then rebuild firmware (web assets get embedded via makefsdata)
 
 ---
 
 ## Building
 
-### Firmware
+### Prerequisites
+- Windows with MSVC Build Tools 2022
+- CMake + Ninja
+- ARM GCC toolchain (arm-none-eabi-gcc 14.2)
+- Node.js + npm (for web UI)
+
+### Build All 4 Boards
 ```powershell
-# From repo root on Windows with MSVC installed:
-.\build_fw.bat
-# Or manually:
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGP2040_BOARDCONFIG=RP2040AdvancedBreakoutBoard -DPICO_SDK_FETCH_FROM_GIT=on
-cmake --build build
+.\build_nobd.bat
+```
+This builds RP2040AdvancedBreakoutBoard, Pico, PicoW, Pico2 and copies UF2s to `release/`.
+
+**Important:** The SDK's mbedtls submodule must be at v2.28.8 for PS4 driver compatibility:
+```bash
+cd build/_deps/pico_sdk-src/lib/mbedtls && git checkout v2.28.8
 ```
 
-### Web UI (must rebuild before firmware if you changed www/)
+### Build Single Board (manual)
+```powershell
+# Set up MSVC environment first via vcvarsall.bat
+set PICO_SDK_PATH=C:\Users\trist\projects\GP2040-CE\build\_deps\pico_sdk-src
+set GP2040_BOARDCONFIG=RP2040AdvancedBreakoutBoard
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSKIP_WEBBUILD=on -DFETCHCONTENT_FULLY_DISCONNECTED=on
+cmake --build build --config Release --parallel
+```
+
+### Web UI (must rebuild before firmware if www/ changed)
 ```powershell
 cd www
 npm install
 npm run build
 cd ..
-# Then rebuild firmware — web assets get embedded via makefsdata
+# Then rebuild firmware — web assets get embedded
 ```
 
-### Finger Gap Tester
+### Release
 ```powershell
-cd tools/finger-gap-tester
-cargo build --release
-# Output: target/release/finger-gap-tester.exe
-```
-
-### Release Upload
-```powershell
-gh release upload v0.7.12-NOBD build/GP2040-CE-NOBD_*.uf2 --clobber
-gh release upload v0.7.12-NOBD tools/finger-gap-tester/target/release/finger-gap-tester.exe --clobber
+gh release create v0.7.12-nobd-X release/GP2040-CE-NOBD_0.7.12_*.uf2 --title "Title" --notes "Notes"
 ```
 
 ---
@@ -124,47 +135,36 @@ gh release upload v0.7.12-NOBD tools/finger-gap-tester/target/release/finger-gap
 
 | File | What Changed |
 |------|-------------|
-| `src/gp2040.cpp` | Replaced `debounceGpioGetAll()` with sync window algorithm |
-| `src/config_utils.cpp` | `DEFAULT_DEBOUNCE_DELAY` remains 5 (unchanged, but worth noting) |
-| `README.md` | Complete rewrite for NOBD documentation |
-| `.gitignore` | Added `tools/finger-gap-tester/target/` |
-| `test_finger_gap.py` | New file — Python gap tester |
-| `tools/finger-gap-tester/` | New directory — Rust GUI gap tester |
+| `src/gp2040.cpp` | Restored stock debounce, added `syncGpioGetAll()` with instant fire, mutually exclusive dispatch |
+| `headers/gp2040.h` | Added `syncGpioGetAll()` declaration, `attackButtonGpios` member |
+| `proto/config.proto` | Added `nobdSyncDelay` field 34 to `GamepadOptions` |
+| `src/config_utils.cpp` | Added `DEFAULT_NOBD_SYNC_DELAY = 5` and `INIT_UNSET_PROPERTY` |
+| `src/webconfig.cpp` | Added `readDoc`/`writeDoc` for `nobdSyncDelay` |
+| `www/src/Pages/SettingsPage.jsx` | Mode dropdown + value field for input timing |
+| `www/src/Locales/en/SettingsPage.jsx` | Translation labels for input timing controls |
+| `README.md` | Rewrite for NOBD documentation |
+| `.gitignore` | Added tool/build artifacts |
 
-**Everything else is stock GP2040-CE v0.7.12.** The sync window is entirely self-contained in `debounceGpioGetAll()`.
+**Everything else is stock GP2040-CE v0.7.12.**
+
+---
+
+## Expert Domain Knowledge
+
+For deep context on fighting game mechanics, game engine input systems, and RP2040 firmware internals, see **[`docs/NOBD-EXPERT-CONTEXT.md`](docs/NOBD-EXPERT-CONTEXT.md)**.
 
 ---
 
 ## Common Tasks
 
 ### Change the default sync window value
+Edit `src/config_utils.cpp`, change `DEFAULT_NOBD_SYNC_DELAY`. Rebuild firmware.
+
+### Change the default debounce value
 Edit `src/config_utils.cpp`, change `DEFAULT_DEBOUNCE_DELAY`. Rebuild firmware.
 
-### Change the recommendation formula
-Edit `tools/finger-gap-tester/src/stats.rs` → `recommended_nobd()` and `test_finger_gap.py` → bottom section.
-
 ### Add a new board
-Copy an existing config from `configs/`, modify pin mappings. Build with `-DGP2040_BOARDCONFIG=YourBoardName`.
+Copy an existing config from `configs/`, modify pin mappings. Add to `build_nobd.bat`. Build with `GP2040_BOARDCONFIG=YourBoardName`.
 
-### Change the web UI label for the setting
-Edit `www/src/Locales/en/SettingsPage.jsx` — find the debounce delay translation key.
-
----
-
-## Expert Domain Knowledge
-
-For deep context on fighting game mechanics, game engine input systems, and RP2040 firmware internals, see **[`docs/NOBD-EXPERT-CONTEXT.md`](docs/NOBD-EXPERT-CONTEXT.md)**. This covers:
-
-- **Fighting Game Expert** — simultaneous inputs, frame data, OBD debate, platform-specific input behavior (PC, PS4/5, Xbox, Switch, Dreamcast, MiSTer), plinking history, negative edge
-- **Game Dev Expert** — frame boundary problem in detail, input pipelines, sub-frame reading, rollback netcode implications, input priority systems
-- **Firmware Expert** — RP2040 hardware, GPIO reading, switch bounce physics, USB HID reports, SOCD cleaning pipeline, timing functions, config mode, flash storage
-
-Load this file when making decisions that touch game mechanics, input timing, or hardware behavior.
-
----
-
-## Release Info
-- **Current release:** v0.7.12-NOBD
-- **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
-- **Assets:** `.uf2` firmware + `finger-gap-tester.exe`
-- **56 board configs** available in `configs/` (only RP2040AdvancedBreakoutBoard has pre-built .uf2)
+### Change the web UI
+Edit `www/src/Pages/SettingsPage.jsx` and `www/src/Locales/en/SettingsPage.jsx`. Run `cd www && npm run build`. Then rebuild firmware.

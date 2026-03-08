@@ -176,23 +176,56 @@ Mask_t raw_gpio = ~gpio_get_all();  // Each bit = one button/direction
 
 **Main loop (`gp2040.cpp`):**
 ```
-setup() → configures pins, USB, drivers
+setup() → configures pins, USB, drivers, caches attackButtonGpios mask
 run() → infinite loop:
-  1. debounceGpioGetAll()     ← NOBD sync window lives here
-  2. Process gamepad inputs
-  3. Process add-ons
-  4. Process USB reports
-  5. Send USB HID report
+  1. syncGpioGetAll() OR debounceGpioGetAll()  ← mutually exclusive
+  2. gamepad->read()
+  3. PreprocessAddons()
+  4. gamepad->process() (SOCD cleaning)
+  5. ProcessAddons()
+  6. Send USB HID report
 ```
 
-**Input pipeline:**
+**Two separate functions (mutually exclusive):**
+- `debounceGpioGetAll()` — stock GP2040-CE per-pin debounce (runs when `nobdSyncDelay == 0`)
+- `syncGpioGetAll()` — NOBD sync window with instant fire (runs when `nobdSyncDelay > 0`)
+
+**Input pipeline (NOBD mode):**
 ```
-GPIO pins → debounceGpioGetAll() → gamepad->debouncedGpio → process() → USB HID report
+GPIO pins → syncGpioGetAll() → gamepad->debouncedGpio → SOCD clean → USB HID report
                   ↑
-            NOBD sync window
+     sync window + instant fire
 ```
 
-The sync window is the **first** processing step. Everything downstream (SOCD cleaning, turbo, macros, etc.) sees already-synced inputs.
+**Input pipeline (Stock mode):**
+```
+GPIO pins → debounceGpioGetAll() → gamepad->debouncedGpio → SOCD clean → USB HID report
+                  ↑
+         per-pin debounce timer
+```
+
+The sync/debounce is the **first** processing step. Everything downstream (SOCD cleaning, turbo, macros, etc.) sees already-processed inputs.
+
+### Instant Fire
+
+When the sync window detects 2+ attack buttons (B1-B4, L1-L2, R1-R2) in `sync_new`, it commits **everything** immediately — buttons AND directions. This covers:
+- Dashes (LP+HP = 2 buttons)
+- Triple supers (3 buttons)
+- Forward + LP + HP (direction committed with the buttons)
+
+Detection uses `attacks & (attacks - 1)` — a bit trick that is non-zero when 2+ bits are set. Single CPU cycle on Cortex-M0+.
+
+### WebConfig Pipeline
+
+Settings flow through this chain:
+```
+config.proto → config_utils.cpp → webconfig.cpp → SettingsPage.jsx
+  (schema)      (defaults)         (read/write)     (UI controls)
+```
+
+- `nobdSyncDelay` = field 34 in `GamepadOptions` (proto)
+- `DEFAULT_NOBD_SYNC_DELAY = 5` (config_utils.cpp)
+- Web UI presents a mode dropdown (Stock Debounce / NOBD Sync Window) + single value field
 
 ### Switch Bounce
 
@@ -239,16 +272,19 @@ So NOBD can safely buffer Left+Right during the window — SOCD cleaning will re
 
 ### Timing on RP2040
 
+**Stock debounce** uses millisecond timing:
 ```c
-uint32_t now = to_ms_since_boot(get_absolute_time());
+uint32_t now = getMillis();  // wraps at ~49 days
 ```
-- `get_absolute_time()` returns microseconds since boot (64-bit)
-- `to_ms_since_boot()` converts to milliseconds (32-bit, wraps at ~49 days)
-- The sync window comparison uses millisecond precision:
-  ```c
-  if (sync_pending && (now - sync_start) >= debounceDelay)
-  ```
-- Subtraction handles wrapping correctly for uint32_t as long as the window is < 49 days
+
+**NOBD sync window** uses microsecond timing for higher precision:
+```c
+uint64_t now_us = to_us_since_boot(get_absolute_time());
+uint64_t syncDelay_us = (uint64_t)nobdSyncDelay * 1000;  // ms → µs
+if (now_us - sync_start_us >= syncDelay_us) { /* commit */ }
+```
+- 64-bit microseconds — no wrapping concerns
+- Sub-millisecond commit accuracy
 
 ### USB Polling and Report Timing
 
@@ -273,7 +309,8 @@ Settings are stored in the RP2040's flash:
 protobuf serialize → flash write (on save)
 flash read → protobuf deserialize (on boot)
 ```
-- `debounceDelay` is part of `GamepadOptions` in `config.proto`
+- `debounceDelay` (field 11) and `nobdSyncDelay` (field 34) are both in `GamepadOptions` in `config.proto`
+- Both values are always stored — the UI mode toggle just determines which one the firmware uses
 - Changes require saving in web UI and potentially rebooting
 
 ---

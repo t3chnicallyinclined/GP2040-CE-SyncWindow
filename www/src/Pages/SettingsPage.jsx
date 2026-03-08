@@ -1691,38 +1691,58 @@ export default function SettingsPage() {
 													</Form.Group>
 													<Form.Group className="row mb-3">
 														<Form.Label>
-															{t('SettingsPage:debounce-delay-label')}
+															{t('SettingsPage:input-timing-mode-label')}
 														</Form.Label>
-														<Col sm={3}>
-															<Form.Control
-																type="number"
-																name="debounceDelay"
-																className="form-control-sm"
-																value={values.debounceDelay}
-																error={errors.debounceDelay}
-																isInvalid={errors.debounceDelay}
-																onChange={handleChange}
-																min={0}
-																max={5000}
-															/>
+														<Col sm={4}>
+															<Form.Select
+																name="inputTimingMode"
+																className="form-select-sm"
+																value={values.nobdSyncDelay > 0 ? 'nobd' : 'stock'}
+																onChange={(e) => {
+																	if (e.target.value === 'stock') {
+																		setFieldValue('nobdSyncDelay', 0);
+																	} else {
+																		setFieldValue('nobdSyncDelay', 5);
+																	}
+																}}
+															>
+																<option value="stock">{t('SettingsPage:input-timing-stock')}</option>
+																<option value="nobd">{t('SettingsPage:input-timing-nobd')}</option>
+															</Form.Select>
 														</Col>
 													</Form.Group>
 													<Form.Group className="row mb-3">
 														<Form.Label>
-															{t('SettingsPage:nobd-sync-delay-label')}
+															{values.nobdSyncDelay > 0
+																? t('SettingsPage:input-timing-window-label')
+																: t('SettingsPage:input-timing-delay-label')}
 														</Form.Label>
 														<Col sm={3}>
-															<Form.Control
-																type="number"
-																name="nobdSyncDelay"
-																className="form-control-sm"
-																value={values.nobdSyncDelay}
-																error={errors.nobdSyncDelay}
-																isInvalid={errors.nobdSyncDelay}
-																onChange={handleChange}
-																min={0}
-																max={25}
-															/>
+															{values.nobdSyncDelay > 0 ? (
+																<Form.Control
+																	type="number"
+																	name="nobdSyncDelay"
+																	className="form-control-sm"
+																	value={values.nobdSyncDelay}
+																	error={errors.nobdSyncDelay}
+																	isInvalid={errors.nobdSyncDelay}
+																	onChange={handleChange}
+																	min={1}
+																	max={25}
+																/>
+															) : (
+																<Form.Control
+																	type="number"
+																	name="debounceDelay"
+																	className="form-control-sm"
+																	value={values.debounceDelay}
+																	error={errors.debounceDelay}
+																	isInvalid={errors.debounceDelay}
+																	onChange={handleChange}
+																	min={0}
+																	max={5000}
+																/>
+															)}
 														</Col>
 													</Form.Group>
 													<Form.Group className="row mb-5">
