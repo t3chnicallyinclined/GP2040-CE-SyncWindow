@@ -663,6 +663,7 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.fourWayMode, doc, "fourWayMode");
     readDoc(gamepadOptions.profileNumber, doc, "profileNumber");
     readDoc(gamepadOptions.debounceDelay, doc, "debounceDelay");
+    readDoc(gamepadOptions.nobdSyncDelay, doc, "nobdSyncDelay");
     readDoc(gamepadOptions.inputModeB1, doc, "inputModeB1");
     readDoc(gamepadOptions.inputModeB2, doc, "inputModeB2");
     readDoc(gamepadOptions.inputModeB3, doc, "inputModeB3");
@@ -733,6 +734,7 @@ std::string getGamepadOptions()
     writeDoc(doc, "fourWayMode", gamepadOptions.fourWayMode ? 1 : 0);
     writeDoc(doc, "profileNumber", gamepadOptions.profileNumber);
     writeDoc(doc, "debounceDelay", gamepadOptions.debounceDelay);
+    writeDoc(doc, "nobdSyncDelay", gamepadOptions.nobdSyncDelay);
     writeDoc(doc, "inputModeB1", gamepadOptions.inputModeB1);
     writeDoc(doc, "inputModeB2", gamepadOptions.inputModeB2);
     writeDoc(doc, "inputModeB3", gamepadOptions.inputModeB3);

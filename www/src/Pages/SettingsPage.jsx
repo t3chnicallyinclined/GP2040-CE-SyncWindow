@@ -455,6 +455,7 @@ const schema = yup.object().shape({
 		.oneOf(AUTHENTICATION_TYPES.map((o) => o.value))
 		.label('X-Input Authentication Type'),
 	debounceDelay: yup.number().required().label('Debounce Delay'),
+	nobdSyncDelay: yup.number().required().min(0).max(25).label('NOBD Sync Delay'),
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
 	inputModeB1: yup
 		.number()
@@ -1703,6 +1704,24 @@ export default function SettingsPage() {
 																onChange={handleChange}
 																min={0}
 																max={5000}
+															/>
+														</Col>
+													</Form.Group>
+													<Form.Group className="row mb-3">
+														<Form.Label>
+															{t('SettingsPage:nobd-sync-delay-label')}
+														</Form.Label>
+														<Col sm={3}>
+															<Form.Control
+																type="number"
+																name="nobdSyncDelay"
+																className="form-control-sm"
+																value={values.nobdSyncDelay}
+																error={errors.nobdSyncDelay}
+																isInvalid={errors.nobdSyncDelay}
+																onChange={handleChange}
+																min={0}
+																max={25}
 															/>
 														</Col>
 													</Form.Group>

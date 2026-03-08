@@ -244,7 +244,7 @@ void GP2040::deinitializeStandardGpio() {
 }
 
 /**
- * @brief Populate a debounced version of gpio_get_all suitable for use for buttons.
+ * @brief Stock GP2040-CE per-pin debounce.
  *
  * For GPIO that are assigned to buttons (based on GpioMappings, see GP2040::initializeStandardGpio),
  * we can centralize their debouncing here and provide access to it to button users.
@@ -264,15 +264,39 @@ void GP2040::debounceGpioGetAll() {
 		return;
 	}
 
-	// Sync window — ALL presses go through the same window.
-	// Guarantees simultaneous buttons land on the same frame.
-	// Keep debounceDelay short (2-3ms).
+	uint32_t now = getMillis();
+	for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
+		Mask_t pin_mask = 1 << pin;
+		if (buttonGpios & pin_mask) {
+			if ((gamepad->debouncedGpio & pin_mask) != \
+					(raw_gpio & pin_mask) && ((now - gpioDebounceTime[pin]) > debounceDelay)) {
+				gamepad->debouncedGpio ^= pin_mask;
+				gpioDebounceTime[pin] = now;
+			}
+		}
+	}
+}
+
+/**
+ * @brief NOBD sync window — groups near-simultaneous presses onto the same USB frame.
+ *
+ * Mutually exclusive with stock debounce. When nobdSyncDelay > 0, the main loop calls
+ * this INSTEAD of debounceGpioGetAll(). Reads raw GPIO directly and writes debouncedGpio.
+ * Includes built-in bounce filtering (sync_new &= raw_buttons drops momentary releases).
+ * Releases are always instant. nobdSyncDelay == 0 means this function is never called.
+ */
+void GP2040::syncGpioGetAll() {
+	Mask_t raw_gpio = ~gpio_get_all();
+	Gamepad* gamepad = Storage::getInstance().GetGamepad();
+
+	uint32_t nobdSyncDelay = Storage::getInstance().getGamepadOptions().nobdSyncDelay;
+
 	static bool     sync_pending   = false;
 	static uint64_t sync_start_us  = 0;
 	static Mask_t   sync_new       = 0;
 
 	uint64_t now_us = to_us_since_boot(get_absolute_time());
-	uint64_t debounceDelay_us = (uint64_t)debounceDelay * 1000;
+	uint64_t syncDelay_us = (uint64_t)nobdSyncDelay * 1000;
 
 	// Early return if nothing to process (skip if sync window is active)
 	if (!sync_pending && gamepad->debouncedGpio == (raw_gpio & buttonGpios)) return;
@@ -285,7 +309,7 @@ void GP2040::debounceGpioGetAll() {
 	// 1) Releases always instant
 	if (just_released) gamepad->debouncedGpio &= ~just_released;
 
-	// 2) Drop pending presses released before commit
+	// 2) Drop pending presses released before commit (bounce filtering)
 	sync_new &= raw_buttons;
 
 	// 3) All new presses enter the sync window
@@ -299,11 +323,15 @@ void GP2040::debounceGpioGetAll() {
 		}
 	}
 
-	// 4) Window expired → commit everything
-	if (sync_pending && (now_us - sync_start_us) >= debounceDelay_us) {
-		gamepad->debouncedGpio |= sync_new;
-		sync_pending = false;
-		sync_new     = 0;
+	// 4) Commit: instant fire if 2+ attack buttons, otherwise wait for window expiry
+	if (sync_pending) {
+		Mask_t attacks = sync_new & attackButtonGpios;
+		bool instant_fire = attacks & (attacks - 1); // true when 2+ bits set
+		if (instant_fire || (now_us - sync_start_us) >= syncDelay_us) {
+			gamepad->debouncedGpio |= sync_new;
+			sync_pending = false;
+			sync_new     = 0;
+		}
 	}
 }
 
@@ -329,8 +357,12 @@ void GP2040::run() {
 
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
-		// Debounce
-		debounceGpioGetAll();
+		// Input processing: NOBD sync window OR stock debounce (mutually exclusive)
+		if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
+			syncGpioGetAll();
+		} else {
+			debounceGpioGetAll();
+		}
 		// Read Gamepad
 		gamepad->read();
 
