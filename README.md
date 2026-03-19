@@ -1,5 +1,9 @@
 # GP2040-CE NOBD
 
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github)](https://github.com/sponsors/t3chnicallyinclined)
+[![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi)](https://ko-fi.com/trisdog)
+[![Donate via Strike](https://img.shields.io/badge/Donate-Strike-7B68EE?logo=bitcoin)](https://strike.me/nobd)
+
 A fork of [GP2040-CE](https://gp2040-ce.info/) v0.7.12 that adds **NOBD (No OBD)** — a sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for MvC2, where dropped dashes from split LP+HP presses are a constant problem.
 
 > **Minimal latency, maximum reliability.** Stock debounce accepts each press instantly but can't group them — your "simultaneous" buttons arrive on different USB frames. NOBD holds presses for up to 5ms to guarantee grouping. That's less than a third of one game frame (16.67ms), and the same timing budget stock debounce already uses for bounce filtering.
