@@ -93,7 +93,7 @@ jobs:
 
       #Global Setup
       - name: Checkout GP2040-CE
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -102,7 +102,7 @@ jobs:
         uses: Fortinbra/RaspberryPiPicoBuild@v7
 
       - name: Download a Build Artifact
-        uses: actions/download-artifact@v4.1.2
+        uses: actions/download-artifact@v8.0.1
         with:
           name: fsData
           path: ${{github.workspace}}/lib/httpd/
@@ -132,7 +132,7 @@ jobs:
         run: GP2040_BOARDCONFIG=${{ matrix.GP2040_BOARDCONFIG }} cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --parallel ${{steps.core_count.outputs.output}}
 
       - name: Upload Pico Artifact
-        uses: actions/upload-artifact@v4.3.1
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: GP2040-CE - ${{ matrix.GP2040_BOARDCONFIG }}
           path: ${{github.workspace}}/build/GP2040-CE*_${{ matrix.GP2040_BOARDCONFIG }}.uf2
@@ -140,7 +140,7 @@ jobs:
 
       - name: Upload .elf Artifact
         if: ${{ matrix.GP2040_BOARDCONFIG == 'Pico'}}
-        uses: actions/upload-artifact@v4.3.1
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: elf
           path: ${{github.workspace}}/build/GP2040-CE*_${{ matrix.GP2040_BOARDCONFIG }}.elf
