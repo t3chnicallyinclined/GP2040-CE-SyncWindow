@@ -2,7 +2,7 @@
 
 If you've ever dropped dashes in MvC2, gotten stray jabs instead of throws, or felt like your buttons "just don't work" on PC when they were fine on Dreamcast — this is why.
 
-> **Context:** NOBD was built for Marvel vs. Capcom 2 — a game with zero built-in input leniency where split button presses produce the wrong move. The observations and testing described here come from MvC2 on Fightcade/Demul. Other games may handle input differently.
+> **Context:** NOBD was built for Marvel vs. Capcom 2 — a game with zero built-in input leniency where split button presses produce the wrong move. The observations and testing described here come from MvC2 via Marvel vs. Capcom Fighting Collection on Steam. Other games may handle input differently.
 
 ---
 
@@ -122,7 +122,7 @@ Your fingers:
 By the time the Dreamcast polls, BOTH buttons are held → sees LP+HP → DASH
 ```
 
-On PC at 1000Hz, the *controller* faithfully reports the stray, but whether the *game* acts on it depends on its input implementation. For MvC2 running through Fightcade/Demul, the emulation layers and input handling make stray inputs a consistent, observable problem — which is why NOBD was built.
+On PC at 1000Hz, the *controller* faithfully reports the stray, but whether the *game* acts on it depends on its input implementation. For MvC2 via Marvel vs. Capcom Fighting Collection on Steam, stray inputs are a consistent, observable problem — which is why NOBD was built.
 
 ---
 
@@ -164,7 +164,7 @@ As covered above, the Dreamcast only reads controller input once per frame via t
 No frame buffer, no display processing, no vsync queue. The total latency from button press to pixels on screen is as short as it gets.
 
 **3. NAOMI arcade hardware = the actual game**
-The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware. When MvC2 players moved from Dreamcast to Fightcade/Demul on PC, they kept the same game but lost the natural input grouping of the Maple Bus.
+The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware. When MvC2 players moved from Dreamcast to PC — whether via Marvel vs. Capcom Fighting Collection or emulators — they kept the same game but lost the natural input grouping of the Maple Bus.
 
 **NOBD recreates the first piece of that stack** — the natural input grouping — on modern 1000Hz hardware. You get Dreamcast-style press grouping with PC-speed responsiveness for everything else.
 
