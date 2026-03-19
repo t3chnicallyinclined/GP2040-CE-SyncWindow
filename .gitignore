@@ -5,6 +5,7 @@ node_modules/
 configs/MyBoard
 .DS_Store
 build/
+release/
 
 .*.sw*
 compile_commands.json

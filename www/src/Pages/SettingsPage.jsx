@@ -456,6 +456,7 @@ const schema = yup.object().shape({
 		.label('X-Input Authentication Type'),
 	debounceDelay: yup.number().required().label('Debounce Delay'),
 	nobdSyncDelay: yup.number().required().min(0).max(25).label('NOBD Sync Delay'),
+	nobdReleaseDebounce: yup.number().label('NOBD Release Debounce'),
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
 	inputModeB1: yup
 		.number()
@@ -1745,7 +1746,31 @@ export default function SettingsPage() {
 															)}
 														</Col>
 													</Form.Group>
-													<Form.Group className="row mb-5">
+													{values.nobdSyncDelay > 0 && (
+													<Form.Group className="row mb-3">
+														<Col sm={8}>
+															<Form.Check
+																label={t(
+																	'SettingsPage:nobd-release-debounce-label',
+																)}
+																type="switch"
+																id="nobdReleaseDebounce"
+																isInvalid={false}
+																checked={Boolean(values.nobdReleaseDebounce)}
+																onChange={(e) => {
+																	setFieldValue(
+																		'nobdReleaseDebounce',
+																		e.target.checked ? 1 : 0,
+																	);
+																}}
+															/>
+															<Form.Text muted>
+																{t('SettingsPage:nobd-release-debounce-hint')}
+															</Form.Text>
+														</Col>
+													</Form.Group>
+													)}
+												<Form.Group className="row mb-5">
 														<Col sm={5}>
 															<Form.Check
 																label={t(
