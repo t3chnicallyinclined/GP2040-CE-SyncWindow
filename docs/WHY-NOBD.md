@@ -2,6 +2,8 @@
 
 If you've ever dropped dashes in MvC2, gotten stray jabs instead of throws, or felt like your buttons "just don't work" on PC when they were fine on Dreamcast — this is why.
 
+> **Context:** NOBD was built for Marvel vs. Capcom 2 — a game with zero built-in input leniency where split button presses produce the wrong move. The observations and testing described here come from MvC2 on Fightcade/Demul. Other games may handle input differently.
+
 ---
 
 ## The Problem You Can Feel But Can't See
@@ -63,7 +65,9 @@ for (pin = 0; pin < NUM_GPIOS; pin++) {
 
 ---
 
-## The Math: Why Strays Are Inevitable at 1000Hz
+## What 1000Hz Polling Actually Does to Your Inputs
+
+> **Note:** NOBD was built for MvC2 — a game with zero built-in leniency for simultaneous presses and observable stray inputs on PC hardware. The behavior described here is what I see in MvC2. Other games handle input differently and may not exhibit the same problems.
 
 When USB polls at 1ms intervals and your fingers have a 3ms gap:
 
@@ -77,17 +81,33 @@ Your fingers:
   HP pressed ─────────────●
                    |← 3ms →|
 
-Poll #1: sees LP=1, HP=0  → reports LP only  (STRAY)
-Poll #2: sees LP=1, HP=0  → reports LP only  (STRAY)
-Poll #3: sees LP=1, HP=0  → reports LP only  (STRAY)
-Poll #4: sees LP=1, HP=1  → reports both     (too late)
+Poll #1: sees LP=1, HP=0  → reports LP only
+Poll #2: sees LP=1, HP=0  → reports LP only
+Poll #3: sees LP=1, HP=0  → reports LP only
+Poll #4: sees LP=1, HP=1  → reports both
 ```
 
-With 1ms polling, **any finger gap greater than 1ms guarantees at least one USB report with only the first button**. At a typical 3ms gap, there are 2-3 reports showing a stray press before the second button appears.
+With 1ms polling, **any finger gap greater than 1ms guarantees at least one USB report with only the first button**. At a typical 3ms gap, 2-3 USB reports show LP alone before HP appears.
 
-The game reads input once per frame (16.67ms at 60fps). If *any* of those stray USB reports is the one the game reads — you get a jab instead of a dash.
+### Whether that matters depends entirely on the game
 
-Compare this to Dreamcast at 60Hz:
+The fact that your PC receives 1000 USB reports per second doesn't mean the game looks at every single one. How those stray reports affect gameplay depends on how the game reads input:
+
+**Games that poll latest state** (e.g., `XInputGetState` snapshots):
+The game reads the controller's current state once per frame. All intermediate USB reports are overwritten. With a 3ms gap in a 16.67ms frame, a stray only happens if the gap straddles the exact moment the game samples — roughly **3/16.67 = ~18%** of the time.
+
+**Games that process the input event queue** (read every buffered report since last frame):
+The game sees each USB report as a discrete event. Every stray report is visible, making split inputs much more likely.
+
+**Games with built-in simultaneous press leniency** (SF6, Guilty Gear Strive, most modern fighters):
+These games have their own 2-4 frame input grouping windows. They'll eat the split and still register the simultaneous press. These games don't need NOBD.
+
+**Games with zero leniency** (MvC2, older titles):
+If the buttons arrive on different frames, you get the wrong move. Period. In MvC2 specifically, a split LP+HP = stray jab instead of a dash, and there's no input buffer or leniency to save you.
+
+### The Dreamcast comparison
+
+On Dreamcast, the controller only *sends* state once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). The stray USB reports never exist in the first place — a 3ms finger gap is invisible because both buttons are held by the time the controller is asked. The only failure case is if the gap straddles the frame boundary (~18%).
 
 ```
 DC polls:  |───────── 16.67ms ──────────|───────── 16.67ms ──────────|
@@ -102,11 +122,7 @@ Your fingers:
 By the time the Dreamcast polls, BOTH buttons are held → sees LP+HP → DASH
 ```
 
-**Stray probability by platform (3ms finger gap):**
-- 1000Hz USB (PC/PS4): **~100%** — multiple polls land in the gap, guaranteed stray
-- 60Hz Dreamcast: **~18%** — only fails if the 3ms gap straddles the frame boundary (3 / 16.67)
-
-This is why dashes feel easy on Dreamcast and unreliable on PC. The hardware is too precise for human fingers.
+On PC at 1000Hz, the *controller* faithfully reports the stray, but whether the *game* acts on it depends on its input implementation. For MvC2 running through Fightcade/Demul, the emulation layers and input handling make stray inputs a consistent, observable problem — which is why NOBD was built.
 
 ---
 
@@ -133,7 +149,7 @@ These have very different bounce characteristics:
 
 2. **Mechanical variance widens the effective finger gap.** Different switch types, ages, and wear levels have different actuation depths and spring tensions. Even if your fingers land at the exact same instant, a soft, worn LP button might close its contact 3-5ms before a stiff, newer HP button. This mechanical offset adds directly to your neurological finger gap.
 
-A player on a MAS stick with mixed-wear leaf switches might have an effective finger gap of **8-15ms** — combining 3-5ms of neurological variance with 5-10ms of mechanical variance. At 1000Hz USB polling, that's 8-15 stray reports before both buttons appear.
+A player on a MAS stick with mixed-wear leaf switches might have an effective finger gap of **8-15ms** — combining 3-5ms of neurological variance with 5-10ms of mechanical variance. This is a common setup for MvC2 players specifically — MAS sticks with Happ buttons were the standard US arcade hardware, and many are still in use decades later with original switches.
 
 ---
 
@@ -142,13 +158,13 @@ A player on a MAS stick with mixed-wear leaf switches might have an effective fi
 There's a reason MvC2 veterans say dashes "just work" on Dreamcast. It's not nostalgia — it's three things working together:
 
 **1. 60Hz Maple Bus polling = natural grouping window**
-The Dreamcast only reads controller input once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). Any two buttons pressed within that window appear on the same frame. With a typical 3ms finger gap, you'd need to be unlucky enough to straddle the exact frame boundary for a stray — about 18% of the time.
+As covered above, the Dreamcast only reads controller input once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). The stray USB reports that plague PC play never exist on Dreamcast — the finger gap is invisible at 60Hz polling.
 
 **2. CRT display = zero processing pipeline**
 No frame buffer, no display processing, no vsync queue. The total latency from button press to pixels on screen is as short as it gets.
 
 **3. NAOMI arcade hardware = the actual game**
-The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware.
+The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware. When MvC2 players moved from Dreamcast to Fightcade/Demul on PC, they kept the same game but lost the natural input grouping of the Maple Bus.
 
 **NOBD recreates the first piece of that stack** — the natural input grouping — on modern 1000Hz hardware. You get Dreamcast-style press grouping with PC-speed responsiveness for everything else.
 
