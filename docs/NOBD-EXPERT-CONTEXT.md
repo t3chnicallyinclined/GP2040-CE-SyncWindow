@@ -224,8 +224,9 @@ config.proto → config_utils.cpp → webconfig.cpp → SettingsPage.jsx
 ```
 
 - `nobdSyncDelay` = field 34 in `GamepadOptions` (proto)
+- `nobdReleaseDebounce` = field 35 in `GamepadOptions` (proto) — boolean, opt-in release debounce
 - `DEFAULT_NOBD_SYNC_DELAY = 5` (config_utils.cpp)
-- Web UI presents a mode dropdown (Stock Debounce / NOBD Sync Window) + single value field
+- Web UI presents a mode dropdown (Stock Debounce / NOBD Sync Window) + value field + Release Debounce checkbox
 
 ### Switch Bounce
 
@@ -247,6 +248,8 @@ Physical release:
 All presses wait the full sync window. This naturally handles transitional contacts during wavedashing: if a finger brushes a button while the window is still open from a multi-button press, the contact gets accumulated into the existing window rather than creating a separate stray.
 
 **Note:** Release-bounce lockout (per-pin timestamps preventing re-presses within N ms of release) was tried and reverted — it interfered with legitimate fast re-presses and didn't fully solve transitional contacts.
+
+**Release debounce (opt-in):** A different approach from lockout. When `nobdReleaseDebounce` is enabled, releases are buffered into `pending_release` and only committed after the sync delay window. If the switch bounces back ON during the window (`pending_release &= ~raw_buttons`), the pending release is cancelled — the button appears to have never released. This avoids the lockout problem because it doesn't block re-presses; instead it makes the bounce invisible. Designed for rhythm games (Guitar Hero, Cadence of Hyrule) where release bounce causes phantom inputs. Off by default to preserve instant releases for fighting games (negative edge, charge partitioning).
 
 ### USB HID Reports
 

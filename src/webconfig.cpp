@@ -664,6 +664,7 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.profileNumber, doc, "profileNumber");
     readDoc(gamepadOptions.debounceDelay, doc, "debounceDelay");
     readDoc(gamepadOptions.nobdSyncDelay, doc, "nobdSyncDelay");
+    readDoc(gamepadOptions.nobdReleaseDebounce, doc, "nobdReleaseDebounce");
     readDoc(gamepadOptions.inputModeB1, doc, "inputModeB1");
     readDoc(gamepadOptions.inputModeB2, doc, "inputModeB2");
     readDoc(gamepadOptions.inputModeB3, doc, "inputModeB3");
@@ -735,6 +736,7 @@ std::string getGamepadOptions()
     writeDoc(doc, "profileNumber", gamepadOptions.profileNumber);
     writeDoc(doc, "debounceDelay", gamepadOptions.debounceDelay);
     writeDoc(doc, "nobdSyncDelay", gamepadOptions.nobdSyncDelay);
+    writeDoc(doc, "nobdReleaseDebounce", gamepadOptions.nobdReleaseDebounce ? 1 : 0);
     writeDoc(doc, "inputModeB1", gamepadOptions.inputModeB1);
     writeDoc(doc, "inputModeB2", gamepadOptions.inputModeB2);
     writeDoc(doc, "inputModeB3", gamepadOptions.inputModeB3);

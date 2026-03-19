@@ -39,6 +39,7 @@ message GamepadOptions
     optional uint32 miniMenuGamepadInput = 32;
     optional InputModeDeviceType inputDeviceType = 33;
     optional uint32 nobdSyncDelay = 34;
+    optional bool nobdReleaseDebounce = 35;
 }
 
 message KeyboardMapping

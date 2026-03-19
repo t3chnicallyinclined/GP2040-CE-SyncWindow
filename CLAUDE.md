@@ -37,10 +37,10 @@ if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
 ### Configuration Pipeline
 | Layer | File | What |
 |-------|------|------|
-| Proto | `proto/config.proto` | `nobdSyncDelay` = field 34 in `GamepadOptions` |
-| Default | `src/config_utils.cpp` | `DEFAULT_NOBD_SYNC_DELAY = 5`, initialized via `INIT_UNSET_PROPERTY` |
-| WebConfig API | `src/webconfig.cpp` | `readDoc`/`writeDoc` for `nobdSyncDelay` |
-| Web UI | `www/src/Pages/SettingsPage.jsx` | Mode dropdown (Stock Debounce / NOBD Sync Window) + value field |
+| Proto | `proto/config.proto` | `nobdSyncDelay` = field 34, `nobdReleaseDebounce` = field 35 in `GamepadOptions` |
+| Default | `src/config_utils.cpp` | `DEFAULT_NOBD_SYNC_DELAY = 5`, `nobdReleaseDebounce = false`, initialized via `INIT_UNSET_PROPERTY` |
+| WebConfig API | `src/webconfig.cpp` | `readDoc`/`writeDoc` for `nobdSyncDelay` and `nobdReleaseDebounce` |
+| Web UI | `www/src/Pages/SettingsPage.jsx` | Mode dropdown + value field + Release Debounce checkbox (NOBD mode only) |
 | Translations | `www/src/Locales/en/SettingsPage.jsx` | Labels for input timing mode controls |
 
 ### Header
@@ -56,10 +56,26 @@ if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
 3. If window already open: accumulate press into sync_new
 4. Every cycle: sync_new &= raw_buttons (drop any released press = bounce filtering)
 5. When (now_us - sync_start_us) >= syncDelay_us → commit sync_new
-6. Releases ALWAYS apply immediately (debouncedGpio &= ~just_released)
+6. Releases apply immediately by default (debouncedGpio &= ~just_released)
 ```
 
 **Bounce filtering:** `sync_new &= raw_buttons` every cycle clears presses that flicker OFF during the window. By the time the window expires and commits, bouncing switches have settled.
+
+### Release Debounce (opt-in via `nobdReleaseDebounce`)
+
+When enabled, releases are buffered instead of applied instantly:
+```
+1. Button released → added to pending_release bitmask, timer starts
+2. Every cycle: pending_release &= ~raw_buttons (cancel if button bounced back ON)
+3. When timer >= syncDelay_us → commit pending releases
+4. If all pending releases cancelled (bounce), timer resets
+```
+
+This prevents phantom re-presses caused by switch bounce on release. The bounce-back makes the button appear to have never released — cleaner than a lockout which blocks legitimate re-presses.
+
+**Use case:** Rhythm games (Guitar Hero, Cadence of Hyrule, etc.) where release bounce causes phantom inputs. Not needed for fighting games where instant releases are preferred for negative edge and charge partitioning.
+
+**Default: OFF.** Enabled via checkbox in web UI (only visible in NOBD mode).
 
 ---
 
@@ -71,6 +87,8 @@ The Settings page has a **mode dropdown** + **single value field**:
 |------|-------------|-------------|
 | Stock Debounce | Debounce Delay (ms), 0-5000 | `debounceDelay` |
 | NOBD Sync Window | Sync Window (ms), 1-25 | `nobdSyncDelay` |
+
+When NOBD mode is selected, a **Release Debounce** checkbox appears. This enables release bounce filtering using the same sync window timer. Recommended for rhythm games, off by default.
 
 Switching to Stock sets `nobdSyncDelay = 0`. Switching to NOBD sets `nobdSyncDelay = 5` (default).
 Both values are always stored in flash — switching modes preserves the other mode's setting.
@@ -139,13 +157,13 @@ gh release create v0.7.12-nobd-X release/GP2040-CE-NOBD_0.7.12_*.uf2 --title "Ti
 
 | File | What Changed |
 |------|-------------|
-| `src/gp2040.cpp` | Restored stock debounce, added `syncGpioGetAll()` with sync window, mutually exclusive dispatch |
+| `src/gp2040.cpp` | Restored stock debounce, added `syncGpioGetAll()` with sync window + release debounce, mutually exclusive dispatch |
 | `headers/gp2040.h` | Added `syncGpioGetAll()` declaration, `attackButtonGpios` member (unused, kept for future use) |
-| `proto/config.proto` | Added `nobdSyncDelay` field 34 to `GamepadOptions` |
-| `src/config_utils.cpp` | Added `DEFAULT_NOBD_SYNC_DELAY = 5` and `INIT_UNSET_PROPERTY` |
-| `src/webconfig.cpp` | Added `readDoc`/`writeDoc` for `nobdSyncDelay` |
-| `www/src/Pages/SettingsPage.jsx` | Mode dropdown + value field for input timing |
-| `www/src/Locales/en/SettingsPage.jsx` | Translation labels for input timing controls |
+| `proto/config.proto` | Added `nobdSyncDelay` field 34, `nobdReleaseDebounce` field 35 to `GamepadOptions` |
+| `src/config_utils.cpp` | Added `DEFAULT_NOBD_SYNC_DELAY = 5`, `nobdReleaseDebounce = false` and `INIT_UNSET_PROPERTY` |
+| `src/webconfig.cpp` | Added `readDoc`/`writeDoc` for `nobdSyncDelay` and `nobdReleaseDebounce` |
+| `www/src/Pages/SettingsPage.jsx` | Mode dropdown + value field + release debounce checkbox for input timing |
+| `www/src/Locales/en/SettingsPage.jsx` | Translation labels for input timing controls + release debounce |
 | ~~`test_finger_gap.py`~~ | Moved to [finger-gap-tester](https://github.com/t3chnicallyinclined/finger-gap-tester) repo |
 | ~~`tools/finger-gap-tester/`~~ | Moved to [finger-gap-tester](https://github.com/t3chnicallyinclined/finger-gap-tester) repo |
 | `README.md` | Rewrite for NOBD documentation |

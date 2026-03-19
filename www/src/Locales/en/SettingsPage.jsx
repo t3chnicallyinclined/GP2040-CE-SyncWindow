@@ -64,6 +64,8 @@ export default {
 	'input-timing-nobd': 'NOBD Sync Window (with Instant Fire)',
 	'input-timing-delay-label': 'Debounce Delay (ms)',
 	'input-timing-window-label': 'Sync Window (ms)',
+	'nobd-release-debounce-label': 'Release Debounce',
+	'nobd-release-debounce-hint': 'Debounces button releases using the sync window timer. Recommended for rhythm games (Guitar Hero, Cadence of Hyrule, etc.) to prevent phantom inputs from switch bounce on release. Not needed for fighting games.',
 	'mini-menu-gamepad-input': 'Use Gamepad Input for Display Mini Menu',
 	'ps4-mode-explanation-text':
 		'PS4 mode allows GP2040-CE to run as an authenticated PS4 controller.',

@@ -293,25 +293,51 @@ void GP2040::syncGpioGetAll() {
 	Mask_t raw_gpio = ~gpio_get_all();
 	Gamepad* gamepad = Storage::getInstance().GetGamepad();
 
-	uint32_t nobdSyncDelay = Storage::getInstance().getGamepadOptions().nobdSyncDelay;
+	const GamepadOptions& options = Storage::getInstance().getGamepadOptions();
+	uint32_t nobdSyncDelay = options.nobdSyncDelay;
+	bool releaseDebounce = options.nobdReleaseDebounce;
 
 	static bool     sync_pending   = false;
 	static uint64_t sync_start_us  = 0;
 	static Mask_t   sync_new       = 0;
 
+	// Release debounce state
+	static Mask_t   pending_release   = 0;
+	static uint64_t release_start_us  = 0;
+
 	uint64_t now_us = to_us_since_boot(get_absolute_time());
 	uint64_t syncDelay_us = (uint64_t)nobdSyncDelay * 1000;
 
-	// Early return if nothing to process (skip if sync window is active)
-	if (!sync_pending && gamepad->debouncedGpio == (raw_gpio & buttonGpios)) return;
+	// Early return if nothing to process (skip if any window is active)
+	if (!sync_pending && !pending_release &&
+	    gamepad->debouncedGpio == (raw_gpio & buttonGpios)) return;
 
 	Mask_t raw_buttons   = raw_gpio & buttonGpios;
 	Mask_t prev          = gamepad->debouncedGpio;
 	Mask_t just_pressed  = raw_buttons & ~prev & ~sync_new;
 	Mask_t just_released = prev & ~raw_buttons;
 
-	// 1) Releases always instant
-	if (just_released) gamepad->debouncedGpio &= ~just_released;
+	// 1) Handle releases
+	if (releaseDebounce) {
+		// Buffer new releases into pending_release
+		if (just_released) {
+			pending_release |= just_released;
+			if (release_start_us == 0) release_start_us = now_us;
+		}
+		// Cancel pending releases if button bounced back (pressed again)
+		pending_release &= ~raw_buttons;
+		// Commit releases after debounce window expires
+		if (pending_release && (now_us - release_start_us) >= syncDelay_us) {
+			gamepad->debouncedGpio &= ~pending_release;
+			pending_release  = 0;
+			release_start_us = 0;
+		}
+		// If all pending releases were cancelled, reset timer
+		if (!pending_release) release_start_us = 0;
+	} else {
+		// Releases always instant (default behavior)
+		if (just_released) gamepad->debouncedGpio &= ~just_released;
+	}
 
 	// 2) Drop pending presses released before commit (bounce filtering)
 	sync_new &= raw_buttons;
