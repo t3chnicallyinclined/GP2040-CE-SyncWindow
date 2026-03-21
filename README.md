@@ -67,6 +67,19 @@ When a new button press is detected, the firmware buffers it (not yet visible in
 
 If the Dreamcast polled at 60Hz and it worked, why not just set USB to 60Hz? Because frequency isn't the problem — **synchronization** is. On Dreamcast, controller reads, game logic, and rendering were all driven by the same VBlank interrupt. On PC, USB polling and the game loop run on completely independent schedules with no shared timing signal. Lowering USB to 60Hz changes the *rate* of frame boundary mismatches but doesn't eliminate them — and you lose 1000Hz responsiveness for everything else. See [the full technical explanation](docs/WHY-NOBD.md#why-not-just-lower-the-usb-polling-rate) for details.
 
+## This Isn't Cheating — It's Fixing a Hardware Gap
+
+No game developer ever expected two buttons to be pressed at the *exact same microsecond*. That's physically impossible. When a game requires "simultaneous" input, the developer designed around the hardware they had: a 16.67ms frame window where any two presses landing in the same frame count as simultaneous. That was the contract — and for decades of arcade and console hardware, it worked.
+
+USB on PC broke that contract. 1000Hz polling exposes sub-frame timing the game was never designed to see, and asynchronous USB/game clocks create frame boundary crossings that didn't exist on original hardware. The result: inputs that would have been "simultaneous" on Dreamcast get split across frames on PC — not because of player error, but because of a hardware mismatch.
+
+NOBD fixes this with an even **stricter** standard than original hardware. The default 5ms sync window is less than a third of the original 16.67ms frame — meaning your presses need to be *closer together* than the original game required. We're not adding leniency. We're removing the frame boundary lottery while holding you to a tighter timing window than the arcade ever did.
+
+**Original hardware:** 16.67ms window, ~18% chance of boundary crossing = occasional dropped inputs despite correct execution.
+**NOBD at 5ms:** 5ms window, 0% chance of boundary crossing = every correctly-timed input registers, every time.
+
+Less window. No lottery. Happy dashing.
+
 ## OBD Context
 
 OBD (One Button Dash) maps a dash macro to a single button. NOBD is an alternative: you still press two buttons, but the firmware ensures they arrive together. No macros, no shortcuts — just reliable delivery of what your fingers are already doing.

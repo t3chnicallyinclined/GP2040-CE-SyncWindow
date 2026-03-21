@@ -242,6 +242,44 @@ As [PulseGeek notes](https://pulsegeek.com/articles/usb-polling-rate-for-control
 
 ---
 
+## This Isn't Cheating — It's a Tighter Standard Than Original Hardware
+
+A common reaction: "Isn't this just adding artificial leniency? Isn't that cheating?"
+
+No. Here's why.
+
+**Every fighting game that requires "simultaneous" button presses was designed knowing that truly simultaneous presses are physically impossible.** Human fingers always have a gap — 2-8ms for most players. Game developers didn't design around microsecond precision. They designed around their hardware's frame window: ~16.67ms at 60fps. Any two presses landing within the same frame counted as simultaneous. That was the contract between the game and the player.
+
+This contract held for decades because the hardware enforced it naturally:
+- **Arcade (JAMMA):** Direct-wired GPIO lines read once per game loop iteration — inherently frame-atomic
+- **Arcade (JVS/NAOMI):** Serial polling driven by the game software — reads happen when the game asks
+- **Dreamcast (Maple Bus):** DMA triggered by VBlank interrupt — controller state, game logic, and rendering all synchronized to the same 60Hz heartbeat
+
+On all of these platforms, a 3ms finger gap is invisible. Both buttons are held by the time the game reads input. The only failure case is if the gap straddles the frame boundary — roughly an 18% chance (3ms gap / 16.67ms frame).
+
+**USB on PC broke this contract.** Not because the game changed, but because the input pipeline changed:
+- 1000Hz USB polling exposes every millisecond of finger gap as separate USB reports
+- USB polling and the game loop run on independent, unsynchronized clocks
+- Frame boundaries that were predictable on original hardware are now a random lottery
+
+The game still expects "within one frame = simultaneous." But the input system now delivers sub-frame resolution the game was never designed to interpret. It's not a feature — it's a hardware mismatch.
+
+**NOBD restores the contract, but with a stricter standard:**
+
+| | Window Size | Boundary Crossing | Net Result |
+|---|---|---|---|
+| **Dreamcast** | 16.67ms frame | ~18% chance per press | Occasional drops despite correct execution |
+| **PC (no NOBD)** | 16.67ms frame | Higher + amplified by 1000Hz stray reports | Frequent drops, especially with >3ms finger gap |
+| **NOBD (5ms default)** | 5ms sync window | 0% — eliminated entirely | Every correctly-timed input registers |
+
+NOBD doesn't give you a bigger window than original hardware — it gives you a **smaller** one. 5ms vs 16.67ms. Your presses need to be closer together than the arcade ever required. What NOBD removes is the *lottery* — the random chance that your correctly-timed input happens to straddle a frame boundary through no fault of your own.
+
+This is the same principle behind every fighting game's own input leniency systems. SF6 reads inputs 3x per frame specifically to avoid this class of problem. Guilty Gear Strive has a multi-frame simultaneous press window. Skullgirls buffers inputs across frames. These games solved it in software because their developers understood the problem. MvC2 didn't, because on its original hardware, the problem didn't exist.
+
+NOBD solves it in firmware — the only layer where it can be solved for a game that has no leniency of its own.
+
+---
+
 ## How NOBD Fixes It
 
 When a new button press is detected, the firmware holds it in a buffer instead of reporting it immediately. A timer starts (default: 5ms). Any additional presses during that window are added to the buffer. When the window expires, all buffered presses are committed at once — guaranteed to appear on the same USB report.
