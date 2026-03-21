@@ -6,7 +6,7 @@
 
 A fork of [GP2040-CE](https://gp2040-ce.info/) v0.7.12 that adds **NOBD (No OBD)** — a sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for MvC2, where dropped dashes from split LP+HP presses are a constant problem.
 
-> **Minimal latency, maximum reliability.** Stock debounce accepts each press instantly but can't group them — your "simultaneous" buttons arrive on different USB frames. NOBD holds presses for up to 5ms to guarantee grouping. That's less than a third of one game frame (16.67ms), and the same timing budget stock debounce already uses for bounce filtering.
+> **Minimal latency, maximum reliability.** Stock debounce accepts each press instantly but can't group them — your "simultaneous" buttons arrive on different USB frames. NOBD holds presses for up to 5ms so they arrive together. That's less than a third of one game frame (16.67ms), and the same timing budget stock debounce already uses for bounce filtering.
 
 ## Demo (MvC2)
 
@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/a56967f7-1b35-4f8f-9fda-de62dac0b089
 
 ## About
 
-I'm a cloud engineer, not a firmware dev. I came back to MVC2 after a 15-year hiatus, started playing on Steam, and immediately noticed I was dropping dashes constantly. That sent me down a rabbit hole. **MVC2 is the only fighting game I play and the only game I've tested this with.** The sync window may help other fighting games that require simultaneous button presses, but many modern games (SF6, Guilty Gear, Skullgirls, etc.) have their own input leniency systems that may already handle this. I can't make claims about games I haven't tested.
+I'm a cloud engineer, not a firmware dev. I came back to MVC2 after a 15-year hiatus, started playing on Steam, and immediately noticed I was dropping dashes constantly. That sent me down a rabbit hole. **MVC2 is the only fighting game I play and the only game I've tested this with.** The sync window may help other games that require simultaneous button presses, but many modern fighting games have their own input leniency systems that handle this at the software level. I can't make claims about games I haven't tested.
 
 Everything here was pieced together from datasheets, API docs, community threads, trial and error, and a lot of back-and-forth with Claude AI. If you spot something wrong, feel free to correct me.
 
@@ -52,7 +52,7 @@ When you press two buttons "at the same time," your fingers are actually 2-8ms a
         → STRAY JAB                 → HP arrives too late
 ```
 
-MvC2 has no built-in leniency for simultaneous presses — its input model is [arcade-era strict](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech), matching SF2's timing requirements. If the buttons arrive on different frames, you get the wrong move. Players are [already reporting this](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) in the MVC Fighting Collection on PC — inconsistent dashes, fast inputs failing — problems that don't exist in modern games with leniency like SF6. The sync window fixes this by holding the first press until the window expires, so both buttons are always committed together.
+MvC2 has no built-in leniency for simultaneous presses — its input model is [arcade-era strict](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech). If the buttons arrive on different frames, you get the wrong move. Players are [already reporting this](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) in the MVC Fighting Collection on PC — inconsistent dashes, fast inputs failing — problems that modern fighting games with built-in leniency don't have. The sync window fixes this by holding the first press until the window expires, so both buttons are committed together.
 
 ## How the Sync Window Works
 
@@ -75,8 +75,8 @@ USB on PC broke that contract. 1000Hz polling exposes sub-frame timing the game 
 
 NOBD fixes this with an even **stricter** standard than original hardware. The default 5ms sync window is less than a third of the original 16.67ms frame — meaning your presses need to be *closer together* than the original game required. We're not adding leniency. We're removing the frame boundary lottery while holding you to a tighter timing window than the arcade ever did.
 
-**Original hardware:** 16.67ms window, ~18% chance of boundary crossing = occasional dropped inputs despite correct execution.
-**NOBD at 5ms:** 5ms window, 0% chance of boundary crossing = every correctly-timed input registers, every time.
+**Original hardware:** 16.67ms frame window, but boundary crossings still happened — less often, not never.
+**NOBD at 5ms:** 5ms window, boundary crossings eliminated — your presses land together or they don't qualify.
 
 Less window. No lottery. Happy dashing.
 

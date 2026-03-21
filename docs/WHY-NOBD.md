@@ -77,12 +77,12 @@ for (pin = 0; pin < NUM_GPIOS; pin++) {
 
 ## MVC2 Has No Modern Input Leniency
 
-Most modern fighting games (SF6, Guilty Gear Strive, Skullgirls) have built-in leniency windows — 2-4 frames where the engine groups near-simultaneous presses. MvC2 has none of this. Its input model is arcade-era strict.
+Most modern fighting games have built-in leniency windows — often spanning multiple frames where the engine groups near-simultaneous presses. MvC2 has none of this. Its input model is arcade-era strict.
 
 > *"Most of the input-leniency style is that of a traditional Street Fighter 2 game."*
 > — [Magnetro / Hit Box Arcade](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech)
 
-Simultaneous presses are ["hard and inconsistent"](https://andrea-jens.medium.com/i-wanna-make-a-fighting-game-a-practical-guide-for-beginners-part-6-311c51ab21c4) even at 60fps — the two buttons need to arrive within 16.6ms. Modern games add leniency to handle this. MvC2 does not, because it was designed for hardware where the input system guaranteed atomic reads.
+Simultaneous presses are ["hard and inconsistent"](https://andrea-jens.medium.com/i-wanna-make-a-fighting-game-a-practical-guide-for-beginners-part-6-311c51ab21c4) even at 60fps — the two buttons need to land within the same frame. Modern games add leniency to handle this. MvC2 does not, because on its original hardware the input system naturally delivered atomic reads per frame.
 
 This is why the frame boundary problem hits MvC2 so hard. Other games would eat the split and still give you the dash. MvC2 gives you a jab.
 
@@ -117,20 +117,20 @@ With 1ms polling, **any finger gap greater than 1ms guarantees at least one USB 
 The fact that your PC receives 1000 USB reports per second doesn't mean the game looks at every single one. How those stray reports affect gameplay depends on how the game reads input:
 
 **Games that poll latest state** (e.g., `XInputGetState` snapshots):
-The game reads the controller's current state once per frame. All intermediate USB reports are overwritten. With a 3ms gap in a 16.67ms frame, a stray only happens if the gap straddles the exact moment the game samples — roughly **3/16.67 = ~18%** of the time.
+The game reads the controller's current state once per frame. All intermediate USB reports are overwritten. A stray only happens if the finger gap straddles the exact moment the game samples — which is less likely than the event queue case, but still happens regularly enough to be noticeable.
 
 **Games that process the input event queue** (read every buffered report since last frame):
 The game sees each USB report as a discrete event. Every stray report is visible, making split inputs much more likely.
 
-**Games with built-in simultaneous press leniency** (SF6, Guilty Gear Strive, most modern fighters):
-These games have their own 2-4 frame input grouping windows. They'll eat the split and still register the simultaneous press. These games don't need NOBD.
+**Games with built-in simultaneous press leniency** (most modern fighters):
+Many modern fighting games have their own multi-frame input grouping windows. They'll eat the split and still register the simultaneous press. These games likely don't need NOBD.
 
 **Games with zero leniency** (MvC2, older titles):
 If the buttons arrive on different frames, you get the wrong move. Period. In MvC2 specifically, a split LP+HP = stray jab instead of a dash, and there's no input buffer or leniency to save you.
 
 ### The Dreamcast comparison
 
-On Dreamcast, the controller only *sends* state once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). The stray USB reports never exist in the first place — a 3ms finger gap is invisible because both buttons are held by the time the controller is asked. The only failure case is if the gap straddles the frame boundary (~18%).
+On Dreamcast, the controller only *sends* state once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). The stray USB reports never exist in the first place — a typical finger gap is invisible because both buttons are held by the time the controller is asked. The only failure case is if the gap happens to straddle the frame boundary — less common, but it still happens.
 
 ```
 DC polls:  |───────── 16.67ms ──────────|───────── 16.67ms ──────────|
@@ -255,7 +255,7 @@ This contract held for decades because the hardware enforced it naturally:
 - **Arcade (JVS/NAOMI):** Serial polling driven by the game software — reads happen when the game asks
 - **Dreamcast (Maple Bus):** DMA triggered by VBlank interrupt — controller state, game logic, and rendering all synchronized to the same 60Hz heartbeat
 
-On all of these platforms, a 3ms finger gap is invisible. Both buttons are held by the time the game reads input. The only failure case is if the gap straddles the frame boundary — roughly an 18% chance (3ms gap / 16.67ms frame).
+On all of these platforms, a typical finger gap is invisible. Both buttons are held by the time the game reads input. The only failure case is if the gap happens to straddle the frame boundary — which still occurred, but far less frequently than on modern USB hardware.
 
 **USB on PC broke this contract.** Not because the game changed, but because the input pipeline changed:
 - 1000Hz USB polling exposes every millisecond of finger gap as separate USB reports
@@ -268,13 +268,13 @@ The game still expects "within one frame = simultaneous." But the input system n
 
 | | Window Size | Boundary Crossing | Net Result |
 |---|---|---|---|
-| **Dreamcast** | 16.67ms frame | ~18% chance per press | Occasional drops despite correct execution |
-| **PC (no NOBD)** | 16.67ms frame | Higher + amplified by 1000Hz stray reports | Frequent drops, especially with >3ms finger gap |
-| **NOBD (5ms default)** | 5ms sync window | 0% — eliminated entirely | Every correctly-timed input registers |
+| **Dreamcast** | 16.67ms frame | Possible but infrequent | Occasional drops despite correct execution |
+| **PC (no NOBD)** | 16.67ms frame | More frequent + amplified by 1000Hz stray reports | Noticeable drops, especially with wider finger gaps |
+| **NOBD (5ms default)** | 5ms sync window | Eliminated — presses grouped before delivery | Consistent simultaneous registration |
 
 NOBD doesn't give you a bigger window than original hardware — it gives you a **smaller** one. 5ms vs 16.67ms. Your presses need to be closer together than the arcade ever required. What NOBD removes is the *lottery* — the random chance that your correctly-timed input happens to straddle a frame boundary through no fault of your own.
 
-This is the same principle behind every fighting game's own input leniency systems. SF6 reads inputs 3x per frame specifically to avoid this class of problem. Guilty Gear Strive has a multi-frame simultaneous press window. Skullgirls buffers inputs across frames. These games solved it in software because their developers understood the problem. MvC2 didn't, because on its original hardware, the problem didn't exist.
+This is the same principle behind modern fighting games' own input leniency systems. Many newer titles read inputs multiple times per frame, have multi-frame simultaneous press windows, or buffer inputs across frames — solving this class of problem in software because their developers understood it existed. MvC2 didn't need to, because on its original hardware the problem didn't exist.
 
 NOBD solves it in firmware — the only layer where it can be solved for a game that has no leniency of its own.
 
@@ -282,7 +282,7 @@ NOBD solves it in firmware — the only layer where it can be solved for a game 
 
 ## How NOBD Fixes It
 
-When a new button press is detected, the firmware holds it in a buffer instead of reporting it immediately. A timer starts (default: 5ms). Any additional presses during that window are added to the buffer. When the window expires, all buffered presses are committed at once — guaranteed to appear on the same USB report.
+When a new button press is detected, the firmware holds it in a buffer instead of reporting it immediately. A timer starts (default: 5ms). Any additional presses during that window are added to the buffer. When the window expires, all buffered presses are committed at once — they appear on the same USB report.
 
 ```
 Without NOBD (stock debounce):                With NOBD (5ms sync window):
@@ -316,7 +316,7 @@ Stock debounce and NOBD both use a 5ms timing window, but they use it differentl
 | Multi-button grouping | None — each pin independent | Guaranteed — all presses in window committed together |
 | What 5ms buys you | Noise filtering | Noise filtering + grouping |
 
-**NOBD is not "zero added latency."** It trades up to 5ms of first-press latency for guaranteed simultaneous delivery. That 5ms is:
+**NOBD is not "zero added latency."** It trades up to 5ms of first-press latency for reliable simultaneous delivery. That 5ms is:
 - Less than **one-third of a game frame** (16.67ms at 60fps)
 - The **same timing budget** stock debounce uses for bounce filtering
 - **Imperceptible** in practice — fighting game reaction times are 150-250ms
