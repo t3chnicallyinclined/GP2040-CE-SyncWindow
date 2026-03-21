@@ -67,22 +67,87 @@ When a new button press is detected, the firmware buffers it (not yet visible in
 
 If the Dreamcast polled at 60Hz and it worked, why not just set USB to 60Hz? Because frequency isn't the problem — **synchronization** is. On Dreamcast, controller reads, game logic, and rendering were all driven by the same VBlank interrupt. On PC, USB polling and the game loop run on completely independent schedules with no shared timing signal. Lowering USB to 60Hz changes the *rate* of frame boundary mismatches but doesn't eliminate them — and you lose 1000Hz responsiveness for everything else. See [the full technical explanation](docs/WHY-NOBD.md#why-not-just-lower-the-usb-polling-rate) for details.
 
-## This Isn't Cheating — It's Fixing a Hardware Gap
+## OBD vs NOBD — What's the Difference?
 
-No game developer ever expected two buttons to be pressed at the *exact same microsecond*. That's physically impossible. When a game requires "simultaneous" input, the developer designed around the hardware they had: a 16.67ms frame window where any two presses landing in the same frame count as simultaneous. That was the contract — and for decades of arcade and console hardware, it worked.
+**OBD (One Button Dash)** maps a dash macro to a single button. You press one button, the firmware sends two. That's a macro — one user action producing multiple outputs that the player didn't physically perform.
 
-USB on PC broke that contract. 1000Hz polling exposes sub-frame timing the game was never designed to see, and asynchronous USB/game clocks create frame boundary crossings that didn't exist on original hardware. The result: inputs that would have been "simultaneous" on Dreamcast get split across frames on PC — not because of player error, but because of a hardware mismatch.
+**NOBD (No OBD)** is not a macro. You press two buttons, the firmware sends two buttons. Nothing is added, removed, or invented. The sync window just prevents a 1ms USB polling boundary from splitting your two real presses across two frames.
 
-NOBD fixes this with an even **stricter** standard than original hardware. The default 5ms sync window is less than a third of the original 16.67ms frame — meaning your presses need to be *closer together* than the original game required. We're not adding leniency. We're removing the frame boundary lottery while holding you to a tighter timing window than the arcade ever did.
+| | OBD | NOBD |
+|---|---|---|
+| **Buttons you press** | 1 | 2 |
+| **Buttons the game sees** | 2 | 2 |
+| **Inputs invented by firmware** | Yes (1 extra) | No |
+| **Is it a macro?** | Yes | No |
+| **Skill requirement** | None — one button = dash | Full — you still need to hit both buttons within the sync window |
+| **What it fixes** | Execution barrier | Hardware timing artifact |
 
-**Original hardware:** 16.67ms frame window, but boundary crossings still happened — less often, not never.
-**NOBD at 5ms:** 5ms window, boundary crossings eliminated — your presses land together or they don't qualify.
+A **macro** is any automated sequence where a single user action produces outputs that differ from what was physically performed — the device *invents* inputs the player didn't make. By that definition:
 
-Less window. No lottery. Happy dashing.
+- **OBD is a macro.** One press → two buttons. The firmware added an input.
+- **NOBD is not a macro.** Two presses → two buttons. The firmware just made sure they arrived together.
 
-## OBD Context
+Think of it like a keyboard that occasionally drops the second letter when you type "th" fast. A fix that makes the keyboard report both keys isn't "auto-typing" — it's just a keyboard that works. OBD would be pressing "t" and having the keyboard type "th" for you.
 
-OBD (One Button Dash) maps a dash macro to a single button. NOBD is an alternative: you still press two buttons, but the firmware ensures they arrive together. No macros, no shortcuts — just reliable delivery of what your fingers are already doing.
+## FAQ — Addressing the Pushback
+
+### "This is cheating."
+
+No. Cheating gives you an ability you wouldn't otherwise have. NOBD gives you the ability you *already had* on the original hardware.
+
+On Dreamcast and arcade CPS2 hardware, the controller and game shared a synchronized clock. The game read inputs once per frame (~16.67ms), and any two presses within that window were naturally grouped. That's how the game was designed — simultaneous meant "same frame," not "same microsecond."
+
+USB on PC broke that. 1000Hz polling and asynchronous clocks expose sub-frame timing the game was never designed to see. Your "simultaneous" presses get split across USB polls by a timing boundary that didn't exist on the original hardware. NOBD restores the behavior the game was built around — and does it with a **stricter** window (5ms vs the original 16.67ms).
+
+If anything, NOBD is *harder* than original hardware. Your presses need to be closer together than the arcade ever required.
+
+### "This is a macro."
+
+A macro is one input in, multiple inputs out. NOBD is two inputs in, two inputs out. Nothing is added. Nothing is invented. The firmware delivers exactly what your fingers did — it just makes sure both presses land on the same USB frame instead of being randomly split by a polling boundary.
+
+By the actual definition of a macro — an automated sequence where a single user action produces outputs the player didn't physically perform — NOBD doesn't qualify. You pressed two buttons. The game saw two buttons. That's it.
+
+### "You're just making dashing easier."
+
+If NOBD made dashing easier, you could mash one button and get dashes. You can't. You still have to press two buttons, with the right timing, with the right spacing. If your fingers are more than 5ms apart, the sync window won't help you — your inputs won't group.
+
+NOBD doesn't lower the execution barrier. It removes a **hardware lottery** where identical inputs sometimes work and sometimes don't based on where they land relative to a 1ms USB polling boundary. The skill requirement is the same. The randomness is gone.
+
+### "Just get good. Practice more."
+
+This isn't an execution problem — it's a hardware timing problem. You can have perfect execution and still drop dashes because your two presses straddled a USB frame boundary. The same input, the same timing, the same muscle memory — sometimes it works, sometimes it doesn't, depending on *when* in the 1ms polling cycle your fingers happen to land.
+
+No amount of practice fixes a random timing boundary you can't see or control. Players who hit this on the [MVC Fighting Collection on Steam](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) aren't bad — they're experiencing a hardware mismatch that didn't exist on the original platform.
+
+### "No one else has this problem."
+
+They do. Players are [independently reporting it](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) in the MVC Fighting Collection on Steam — inconsistent dashes, fast inputs failing, inputs that work on one attempt and not the next. It's been a [long-standing community observation](https://archive.supercombo.gg/t/you-think-mvc2-is-hard-to-play-on-pad/133861) that MvC2 simultaneous presses are unreliable.
+
+The reason most people don't notice in *other* fighting games is that **modern games already solved this problem at the software level.** Street Fighter 6 [reads inputs 3x per frame](https://www.eventhubs.com/news/2023/jun/17/sf6-input-trouble-breakdown/) and has multi-frame leniency windows. Guilty Gear Strive, Tekken 8, and most modern fighters have similar built-in leniency for simultaneous presses. MvC2 doesn't — it's an arcade-era game with [SF2-style input strictness](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech) running on hardware it was never designed for.
+
+### "This is only a problem because you're bad at the game."
+
+The same player, with the same stick, pressing the same buttons with the same timing, will get different results depending on:
+- Whether the USB host polled between their two presses (1ms boundary — invisible, uncontrollable)
+- Whether the game's frame boundary fell between the two USB reports (asynchronous clocks — invisible, uncontrollable)
+
+This is **not** a skill variable. It's a coin flip determined by two clocks the player can't see or influence. On the original Dreamcast hardware, this coin flip didn't exist because the clocks were synchronized. NOBD eliminates the coin flip. Your execution determines the outcome — not timing luck.
+
+### "This only affects PC/Steam, so who cares?"
+
+Exactly — **this is a PC-specific problem**, which is precisely why it needs a PC-specific fix. MvC2 was designed for arcade hardware (CPS2) and ported to Dreamcast, both of which had synchronized input polling. The PC port via Marvel vs. Capcom Fighting Collection inherits the original game's zero-leniency input model but runs it on asynchronous USB hardware that exposes timing gaps the game was never designed to handle.
+
+Console players on the Fighting Collection may also experience this depending on the platform's USB implementation, but the problem is most pronounced on PC where 1000Hz polling is standard and there's no platform-level input synchronization.
+
+### "If it was a real problem, Capcom would have fixed it."
+
+MvC2's code in the Fighting Collection is largely an emulated/ported version of a 25-year-old game. Adding input leniency would mean modifying the original game logic — something Capcom has historically avoided in re-releases to preserve arcade accuracy. Modern Capcom games (SF6) *do* solve this with multi-frame input reads, which proves they're aware of the problem. They just aren't retrofitting it into legacy titles.
+
+### "Every other player deals with it, why can't you?"
+
+Every other player *is* dealing with it — they just may not know why their dashes drop. Some players compensate by switching to OBD (a literal macro). Some use pad where the shorter finger travel reduces the gap. Some play on platforms with lower polling rates where the problem is less frequent. And some just accept the inconsistency as "MvC2 being MvC2" without realizing it's a hardware issue that didn't exist on the original platform.
+
+NOBD is the only solution that fixes the actual problem without adding macros, removing inputs, or changing platforms.
 
 ## Configuration
 
