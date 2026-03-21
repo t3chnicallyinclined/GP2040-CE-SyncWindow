@@ -86,7 +86,7 @@ The Settings page has a **mode dropdown** + **single value field**:
 | Mode | Value Field | Config Used |
 |------|-------------|-------------|
 | Stock Debounce | Debounce Delay (ms), 0-5000 | `debounceDelay` |
-| NOBD Sync Window | Sync Window (ms), 1-25 | `nobdSyncDelay` |
+| NOBD Sync Window | Sync Window (ms), 1-500 | `nobdSyncDelay` |
 
 When NOBD mode is selected, a **Release Debounce** checkbox appears. This enables release bounce filtering using the same sync window timer. Recommended for rhythm games, off by default.
 

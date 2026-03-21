@@ -14,6 +14,16 @@ This isn't your execution. It's physics — specifically, how USB polling intera
 
 Your fingers are never truly simultaneous. Even the fastest, most practiced inputs have a **2-8ms gap** between the two contacts closing. On Dreamcast, nobody noticed because the console only checked once every 16.67ms. On modern hardware polling at 1000Hz (once per millisecond), that tiny finger gap is fully visible — and it splits your inputs across frames.
 
+This isn't theoretical. Players are already hitting this in the MVC2 Fighting Collection on PC:
+
+> *"I'm having trouble doing the 2-button dashes consistently on keyboard... this might force me to get an actual fight stick with buttons I can assign the dash to."*
+> — [Steam Community Discussion](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/)
+
+> *"There's a weird problem with keyboards when you try to do any half circle special move that starts from RIGHT and ends on LEFT, it will fail if you do it fast. I tried to replicate this problem with SF6 and it doesn't have this problem there."*
+> — [Steam Community Discussion](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/)
+
+This has been a [long-standing community observation](https://archive.supercombo.gg/t/you-think-mvc2-is-hard-to-play-on-pad/133861) — MvC2 simply does not recognize buttons pressed together unless they land at the exact same time, making simultaneous inputs a persistent hardware friction point even before the PC port existed.
+
 ---
 
 ## How USB Polling Actually Works
@@ -62,6 +72,19 @@ for (pin = 0; pin < NUM_GPIOS; pin++) {
 - The first press on any pin is accepted **instantly** (0ms latency)
 
 **Key insight: debounce solves noise. It doesn't solve grouping.** You could set debounce to 0ms or 100ms — it wouldn't change whether your two-button press arrives on the same frame or not. That's a fundamentally different problem.
+
+---
+
+## MVC2 Has No Modern Input Leniency
+
+Most modern fighting games (SF6, Guilty Gear Strive, Skullgirls) have built-in leniency windows — 2-4 frames where the engine groups near-simultaneous presses. MvC2 has none of this. Its input model is arcade-era strict.
+
+> *"Most of the input-leniency style is that of a traditional Street Fighter 2 game."*
+> — [Magnetro / Hit Box Arcade](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech)
+
+Simultaneous presses are ["hard and inconsistent"](https://andrea-jens.medium.com/i-wanna-make-a-fighting-game-a-practical-guide-for-beginners-part-6-311c51ab21c4) even at 60fps — the two buttons need to arrive within 16.6ms. Modern games add leniency to handle this. MvC2 does not, because it was designed for hardware where the input system guaranteed atomic reads.
+
+This is why the frame boundary problem hits MvC2 so hard. Other games would eat the split and still give you the dash. MvC2 gives you a jab.
 
 ---
 
@@ -160,13 +183,62 @@ There's a reason MvC2 veterans say dashes "just work" on Dreamcast. It's not nos
 **1. 60Hz Maple Bus polling = natural grouping window**
 As covered above, the Dreamcast only reads controller input once per frame via the [Maple Bus](https://dreamcast.wiki/Maple_bus) (~16.67ms). The stray USB reports that plague PC play never exist on Dreamcast — the finger gap is invisible at 60Hz polling.
 
+This isn't speculation — it's in the source code. The [KallistiOS Dreamcast SDK](http://gamedev.allusion.net/docs/kos-current/maple_8h_source.html) explicitly ties Maple bus DMA to the VBlank interrupt handler: the polling callback is "Called on every VBL (~60fps)" with dedicated "VBlank interrupt counter" state. The [PVR IRQ handler](https://github.com/KallistiOS/KallistiOS/blob/master/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c) confirms the VBlank drives both frame flipping and Maple polling in the same interrupt chain.
+
+As [DCEmulation developers note](https://dcemulation.org/phpBB/viewtopic.php?t=105320): *"Everything in an old console is timed to the television. Your frame loop almost always begins with a call to wait for VBlank."* Controller state, game logic, and rendering are all locked to the same 60Hz heartbeat. Every button read is a complete atomic snapshot — two buttons pressed within the same 16.7ms VBlank window are guaranteed to arrive at the game simultaneously. There is no sub-frame ambiguity.
+
 **2. CRT display = zero processing pipeline**
 No frame buffer, no display processing, no vsync queue. The total latency from button press to pixels on screen is as short as it gets.
 
-**3. NAOMI arcade hardware = the actual game**
-The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware. When MvC2 players moved from Dreamcast to PC — whether via Marvel vs. Capcom Fighting Collection or emulators — they kept the same game but lost the natural input grouping of the Maple Bus.
+**3. NAOMI arcade hardware = same game, different input protocol**
+The Dreamcast is essentially a home [Sega NAOMI](https://en.wikipedia.org/wiki/Sega_NAOMI) board — same SH4 CPU, same PowerVR2 GPU. MvC2 on Dreamcast isn't a port with rewritten input handling. It's the arcade game running on the arcade hardware.
+
+However, the NAOMI arcade version used a completely different input system: [JVS (JAMMA Video Standard)](https://github.com/TheOnlyJoey/openjvs/wiki/Protocol) — a serial request/response protocol over RS-485 at 115200 baud. Unlike the JAMMA standard's direct-wired digital inputs, [JVS sends messages one byte at a time](https://deepwiki.com/djhackersdev/segatools/5.4-jvs-and-io-boards) between a master (game board) and slave (I/O board). As with the Dreamcast's Maple Bus, the game software drives the polling — the I/O board just responds when asked. Neither system is subject to the asynchronous USB timing problem.
+
+When MvC2 players moved from Dreamcast to PC — whether via Marvel vs. Capcom Fighting Collection or emulators — they kept the same game but lost the frame-synchronized input model of the original hardware.
 
 **NOBD recreates the first piece of that stack** — the natural input grouping — on modern 1000Hz hardware. You get Dreamcast-style press grouping with PC-speed responsiveness for everything else.
+
+---
+
+## "Why Not Just Lower the USB Polling Rate?"
+
+This is the most common objection, and it sounds intuitive: if the Dreamcast polled at 60Hz and it worked, why not just lower the USB polling rate to 60Hz?
+
+Because **frequency isn't the problem — synchronization is.**
+
+On Dreamcast, the VBlank interrupt synchronized three things simultaneously:
+1. **Controller state read** (Maple DMA)
+2. **Game logic update**
+3. **Frame render**
+
+On PC over USB, none of these are synchronized:
+- USB polling runs on its own schedule (driven by the host controller)
+- The game runs on its own schedule (game loop / vsync)
+- There is no shared VBlank signal between them
+- A USB device has no way to know when the game is processing a frame
+
+Lowering USB polling to 60Hz changes the *frequency* of polling but does not *synchronize* it to the game's frame boundaries. You get a different *rate* of frame boundary mismatches — not elimination of them. And you lose 1000Hz responsiveness for everything else (single-button presses, directions, menus).
+
+```
+Dreamcast (synchronized):
+   VBlank ─────────┬─────────────────────┬─────────────────────┬──
+                    │                     │                     │
+   Maple read ─────●                     ●                     ●
+   Game logic ─────●                     ●                     ●
+   Render ─────────●                     ●                     ●
+   All three happen at the same instant. Buttons read = buttons processed.
+
+PC with 60Hz USB polling (not synchronized):
+   Game frame ─────┬─────────────────────┬─────────────────────┬──
+                    │                     │                     │
+   USB poll ───────────●                      ●                   ●
+                    offset varies every frame — no fixed relationship
+```
+
+As [PulseGeek notes](https://pulsegeek.com/articles/usb-polling-rate-for-controllers-in-emulation/): *"Align emulator input polling with frame order to avoid offsets."* This is exactly what emulators can do (and original hardware did) — but a USB device cannot, because it has no visibility into the game's frame timing.
+
+**NOBD takes a different approach:** instead of trying to match the game's frame rate (impossible from firmware), it groups presses within a short time window so they arrive together regardless of when the game reads them. The game sees a clean simultaneous press no matter which frame boundary it falls on.
 
 ---
 
@@ -224,10 +296,17 @@ For single-button actions (jabs, blocking, movement), the worst case is 5ms of a
 - [GP2040-CE FAQ](https://gp2040-ce.info/faq/faq-general/) — General FAQ
 - [USB HID Specification](https://www.usb.org/hid) — bInterval and polling mechanics
 - [Controller Input Lag Database](https://inputlag.science/controller/results) — Comprehensive latency measurements
+- [USB Polling Rate for Controllers in Emulation](https://pulsegeek.com/articles/usb-polling-rate-for-controllers-in-emulation/) — Why polling rate alone doesn't solve frame sync
 
 **Dreamcast and Arcade Hardware:**
 - [Dreamcast Maple Bus](https://dreamcast.wiki/Maple_bus) — 60Hz VBlank-synced polling
+- [KallistiOS maple.h](http://gamedev.allusion.net/docs/kos-current/maple_8h_source.html) — VBlank-driven Maple DMA source code
+- [KallistiOS PVR IRQ](https://github.com/KallistiOS/KallistiOS/blob/master/kernel/arch/dreamcast/hardware/pvr/pvr_irq.c) — VBlank handler driving frame flip and Maple polling
+- [DCEmulation Developer Forum](https://dcemulation.org/phpBB/viewtopic.php?t=105320) — Console frame loops tied to VBlank
 - [Sega NAOMI Hardware](https://en.wikipedia.org/wiki/Sega_NAOMI) — Shared architecture with Dreamcast
+- [NAOMI Dev Log](https://meanwhileblog.wordpress.com/2019/06/02/sega-naomi-dev-log/) — JVS protocol replacing JAMMA
+- [OpenJVS Protocol Documentation](https://github.com/TheOnlyJoey/openjvs/wiki/Protocol) — JVS serial protocol details
+- [JVS and IO Boards (segatools)](https://deepwiki.com/djhackersdev/segatools/5.4-jvs-and-io-boards) — Master/slave I/O architecture
 - [MVC2 Arcade vs Dreamcast](https://archive.supercombo.gg/t/mvc2-differences-between-arcade-version-dreamcast-version/142388) — Version comparison
 
 **Switch Bounce and Debouncing:**
@@ -235,8 +314,16 @@ For single-button actions (jabs, blocking, movement), the worst case is 5ms of a
 - [Switch Bounce and Dirty Secrets](https://www.analog.com/en/resources/technical-articles/switch-bounce-and-other-dirty-little-secrets.html) — Analog Devices technical article
 
 **Fighting Game Input Analysis:**
+- [I Wanna Make a Fighting Game — Input Buffers](https://andrea-jens.medium.com/i-wanna-make-a-fighting-game-a-practical-guide-for-beginners-part-6-311c51ab21c4) — Andrea Demetrio on simultaneous press difficulty
+- [Magnetro Presents: MvC2 Magneto Tech](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech) — MvC2's SF2-style input leniency model
 - [SF6 Input Polling Analysis](https://www.eventhubs.com/news/2023/jun/17/sf6-input-trouble-breakdown/) — SF6 reads inputs 3x per frame
 - [XInputGetState API](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate) — Snapshot-only input reading
+- [GameDev.net — Fighting Game Input System](https://gamedev.net/forums/topic/573120-fighting-game-input-system/573120/) — Input polling tied to game loop
+- [Tekken 7 PC — Simultaneous Button Input](https://steamcommunity.com/app/389730/discussions/0/1291817837636301883/) — Stray individual reads on simultaneous press
+
+**Community Reports:**
+- [MVC Fighting Collection — Steam Discussions](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) — Players reporting inconsistent dashes and fast inputs failing
+- [Shoryuken Archive — MVC2 on Pad](https://archive.supercombo.gg/t/you-think-mvc2-is-hard-to-play-on-pad/133861) — Long-standing community acknowledgment of simultaneous input friction
 
 **NOBD Project:**
 - [GP2040-CE NOBD Repository](https://github.com/t3chnicallyinclined/GP2040-CE-NOBD) — Source code and releases

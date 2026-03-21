@@ -52,7 +52,7 @@ When you press two buttons "at the same time," your fingers are actually 2-8ms a
         → STRAY JAB                 → HP arrives too late
 ```
 
-MvC2 has no built-in leniency for simultaneous presses — if the buttons arrive on different frames, you get the wrong move. The sync window fixes this by holding the first press until the window expires, so both buttons are always committed together.
+MvC2 has no built-in leniency for simultaneous presses — its input model is [arcade-era strict](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech), matching SF2's timing requirements. If the buttons arrive on different frames, you get the wrong move. Players are [already reporting this](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) in the MVC Fighting Collection on PC — inconsistent dashes, fast inputs failing — problems that don't exist in modern games with leniency like SF6. The sync window fixes this by holding the first press until the window expires, so both buttons are always committed together.
 
 ## How the Sync Window Works
 
@@ -62,6 +62,10 @@ When a new button press is detected, the firmware buffers it (not yet visible in
 - **Releases** are instant — no delay on letting go of buttons (charge moves work fine)
 - **Slider = 0** disables the sync window entirely for raw passthrough
 - Replaces stock debounce — the sync window also handles switch bounce by continuously validating buffered presses against GPIO state (`sync_new &= raw`)
+
+## "Why Not Just Lower the Polling Rate?"
+
+If the Dreamcast polled at 60Hz and it worked, why not just set USB to 60Hz? Because frequency isn't the problem — **synchronization** is. On Dreamcast, controller reads, game logic, and rendering were all driven by the same VBlank interrupt. On PC, USB polling and the game loop run on completely independent schedules with no shared timing signal. Lowering USB to 60Hz changes the *rate* of frame boundary mismatches but doesn't eliminate them — and you lose 1000Hz responsiveness for everything else. See [the full technical explanation](docs/WHY-NOBD.md#why-not-just-lower-the-usb-polling-rate) for details.
 
 ## OBD Context
 
@@ -120,10 +124,12 @@ Measure your natural finger gap with the **[Finger Gap Tester](https://github.co
 
 ## References
 
-- [Why 1000Hz USB Polling Breaks Your Dashes](docs/WHY-NOBD.md) — Deep dive into USB polling, debounce vs sync, switch types, and the Dreamcast comparison
+- [Why 1000Hz USB Polling Breaks Your Dashes](docs/WHY-NOBD.md) — Deep dive into USB polling, debounce vs sync, switch types, the Dreamcast comparison, and why lowering polling rate doesn't work
+- [MVC Fighting Collection — Steam Community Reports](https://steamcommunity.com/app/2634890/discussions/0/4755326933235585026/) — Players independently reporting the exact problem NOBD addresses
+- [Magnetro MvC2 Magneto Tech](https://www.hitboxarcade.com/blogs/hit-box/magnetro-presents-mvc2-magneto-tech) — MvC2's SF2-style input leniency model
 - [Dreamcast Maple Bus](https://dreamcast.wiki/Maple_bus) — 60Hz VBlank-synced polling (no intermediate reports)
+- [KallistiOS maple.h](http://gamedev.allusion.net/docs/kos-current/maple_8h_source.html) — VBlank-driven Maple DMA source code
 - [XInputGetState](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate) — Snapshot-only API
-- [DirectInput Buffered Mode](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee416236(v=vs.85)) — Sees every state change
 - [SF6 Input Polling Analysis](https://www.eventhubs.com/news/2023/jun/17/sf6-input-trouble-breakdown/) — SF6 reads inputs 3x per frame
 - [GP2040-CE FAQ](https://gp2040-ce.info/faq/faq-general/) — 1000Hz USB polling, sub-1ms latency
 - [Controller Input Lag](https://inputlag.science/controller/results) — Comprehensive latency data
