@@ -28,7 +28,6 @@ private:
     // GPIO debouncer (stock GP2040-CE per-pin debounce)
     void debounceGpioGetAll();
     Mask_t buttonGpios;
-    Mask_t attackButtonGpios;
     uint32_t gpioDebounceTime[NUM_BANK0_GPIOS];
 
     // NOBD sync window (groups near-simultaneous presses)

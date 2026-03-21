@@ -158,7 +158,7 @@ gh release create v0.7.12-nobd-X release/GP2040-CE-NOBD_0.7.12_*.uf2 --title "Ti
 | File | What Changed |
 |------|-------------|
 | `src/gp2040.cpp` | Restored stock debounce, added `syncGpioGetAll()` with sync window + release debounce, mutually exclusive dispatch |
-| `headers/gp2040.h` | Added `syncGpioGetAll()` declaration, `attackButtonGpios` member (unused, kept for future use) |
+| `headers/gp2040.h` | Added `syncGpioGetAll()` declaration |
 | `proto/config.proto` | Added `nobdSyncDelay` field 34, `nobdReleaseDebounce` field 35 to `GamepadOptions` |
 | `src/config_utils.cpp` | Added `DEFAULT_NOBD_SYNC_DELAY = 5`, `nobdReleaseDebounce = false` and `INIT_UNSET_PROPERTY` |
 | `src/webconfig.cpp` | Added `readDoc`/`writeDoc` for `nobdSyncDelay` and `nobdReleaseDebounce` |

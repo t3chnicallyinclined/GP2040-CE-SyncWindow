@@ -176,7 +176,7 @@ Mask_t raw_gpio = ~gpio_get_all();  // Each bit = one button/direction
 
 **Main loop (`gp2040.cpp`):**
 ```
-setup() → configures pins, USB, drivers, caches attackButtonGpios mask
+setup() → configures pins, USB, drivers
 run() → infinite loop:
   1. syncGpioGetAll() OR debounceGpioGetAll()  ← mutually exclusive
   2. gamepad->read()

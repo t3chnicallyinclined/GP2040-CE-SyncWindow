@@ -87,12 +87,6 @@ void GP2040::setup() {
 	// new set of GPIOs to use...
 	this->initializeStandardGpio();
 
-	// Cache attack button GPIO mask for sync window detection
-	attackButtonGpios = gamepad->mapButtonB1->pinMask | gamepad->mapButtonB2->pinMask
-	                  | gamepad->mapButtonB3->pinMask | gamepad->mapButtonB4->pinMask
-	                  | gamepad->mapButtonL1->pinMask | gamepad->mapButtonR1->pinMask
-	                  | gamepad->mapButtonL2->pinMask | gamepad->mapButtonR2->pinMask;
-
 	const GamepadOptions& gamepadOptions = Storage::getInstance().getGamepadOptions();
 
 	// check setup options and add modes to the list
