@@ -88,6 +88,36 @@ This is why the frame boundary problem hits MvC2 so hard. Other games would eat 
 
 ---
 
+## Testing It: How Often Does MvC2 Read Input Per Frame?
+
+The claim above — that MvC2 has no multi-read leniency — is testable. We built a simple tool ([tools/frame_read_tester.py](../tools/frame_read_tester.py)) that creates a virtual Xbox 360 controller via ViGEmBus and sends precisely timed button pulses to the game. By varying the pulse duration and counting how many the game registers, we can infer how often the game reads input.
+
+### Method
+
+The script sends a single button press held for exactly N milliseconds, then releases. A Start button press bookends the test as a visible marker. 20 pulses are sent per test with 200ms gaps between them — long enough that each pulse lands in a different frame. We ran three tests with pulse durations of 1ms, 8ms, and 16ms against MvC2 via Marvel vs. Capcom Fighting Collection on Steam, recording the screen and counting in-game responses.
+
+The logic: if a game reads input once per frame (every ~16.67ms at 60fps), then the probability of catching a pulse equals `pulse_duration / 16.67ms`. A 1ms pulse would be caught ~6% of the time. An 8ms pulse ~48%. A 16ms pulse ~96%. If the game reads multiple times per frame (like Street Fighter 6, which [reads 3x per frame](https://www.eventhubs.com/news/2023/jun/17/sf6-input-trouble-breakdown/)), the catch rate would be significantly higher at short durations.
+
+### Results
+
+| Pulse Duration | Caught | Rate | Predicted (1 read/frame) | Predicted (3 reads/frame) |
+|---------------|--------|------|--------------------------|---------------------------|
+| 1ms | 1 / 20 | 5% | 6% | 18% |
+| 8ms | 10 / 20 | 50% | 48% | 100% |
+| 16ms | 20 / 20 | 100% | 96% | 100% |
+
+### What This Suggests
+
+The observed catch rates closely match the single-read-per-frame prediction across all three durations. At 1ms, the game caught only 1 out of 20 pulses — consistent with a ~6% catch window, not the ~18% you'd expect from 3 reads per frame. At 8ms, exactly half were caught — again matching the single-read model. At 16ms, all 20 were caught, as expected when the pulse nearly fills the entire frame.
+
+This doesn't definitively prove the game reads input exactly once (there could be edge cases, platform-specific behavior, or buffering we can't observe from outside the game). But the data is consistent with a single-read model and inconsistent with a multi-read model. It aligns with what we'd expect from an arcade-era game: one input snapshot per frame, no leniency, no buffering.
+
+For comparison, a game like SF6 with 3 reads per frame would catch a 1ms pulse roughly 18% of the time and an 8ms pulse nearly 100% of the time. That's not what we see in MvC2.
+
+**The practical implication:** if you press two buttons 3ms apart and the game's single read happens to fall between them, the game sees them on different frames. Not because your execution was bad, but because a single-read engine running on asynchronous USB hardware has no way to group them.
+
+---
+
 ## What 1000Hz Polling Actually Does to Your Inputs
 
 > **Note:** NOBD was built for MvC2 — a game with zero built-in leniency for simultaneous presses and observable stray inputs on PC hardware. The behavior described here is what I see in MvC2. Other games handle input differently and may not exhibit the same problems.

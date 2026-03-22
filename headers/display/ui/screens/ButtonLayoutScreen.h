@@ -15,7 +15,7 @@
 #include "GPGFX_UI_layouts.h"
 
 #define INPUT_HISTORY_MAX_INPUTS 22
-#define INPUT_HISTORY_MAX_MODES 12
+#define INPUT_HISTORY_MAX_MODES 13
 
 // Static to ensure memory is never doubled
 static const char * displayNames[INPUT_HISTORY_MAX_MODES][INPUT_HISTORY_MAX_INPUTS] = {
@@ -102,6 +102,13 @@ static const char * displayNames[INPUT_HISTORY_MAX_MODES][INPUT_HISTORY_MAX_INPU
             "2", "3", "1", "4",
             "5", "6", "7", "8",
             "9", "10", "11", "12", "13", "14"
+    },
+    {		// Dreamcast - 12
+            CHAR_UP, CHAR_DOWN, CHAR_LEFT, CHAR_RIGHT,
+            CHAR_UL, CHAR_UR, CHAR_DL, CHAR_DR,
+            "A", "B", "X", "Y",
+            "C", "Z", "LT", "RT",
+            "", "ST", "", "", "", ""
     }
 };
 
@@ -144,6 +151,8 @@ class ButtonLayoutScreen : public GPScreen {
             {INPUT_MODE_ASTRO, 9},
             {INPUT_MODE_XBOXORIGINAL, 10},
             {INPUT_MODE_GENERIC, 11},
+            {INPUT_MODE_DREAMCAST, 12},
+            {INPUT_MODE_SWITCH_PRO, 1},
         };
 
         Gamepad* gamepad;

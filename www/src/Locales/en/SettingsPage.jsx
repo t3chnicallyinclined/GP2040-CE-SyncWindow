@@ -24,6 +24,7 @@ export default {
 		psclassic: 'Playstation Classic',
 		xboxoriginal: 'Original Xbox',
 		xbone: 'Xbox One',
+		dreamcast: 'Dreamcast (Maple Bus)',
 	},
 	'input-mode-group': {
 		primary: 'Primary Input Modes',
@@ -182,4 +183,11 @@ export default {
 		'vendor-id': 'Vendor ID',
 	},
 	'input-mode-device-type-label': 'Input Mode Controller Type',
+	'dreamcast-pin-a-label': 'Dreamcast Maple Bus Pin A (SDCKA)',
+	'dreamcast-pin-b-label': 'Dreamcast Maple Bus Pin B (SDCKB)',
+	'dc-sync-mode-label': 'DC Sync Mode',
+	'dc-sync-mode-off': 'Off (sample at poll)',
+	'dc-sync-mode-accumulate': 'Accumulate (zero latency)',
+	'dc-sync-mode-window': 'Sync Window (boundary-aware)',
+	'dc-sync-window-label': 'DC Sync Window (ms)',
 };

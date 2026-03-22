@@ -72,6 +72,10 @@ void DriverManager::setup(InputMode mode) {
         case INPUT_MODE_SWITCH_PRO:
             driver = new SwitchProDriver();
             break;
+        case INPUT_MODE_DREAMCAST:
+            driver = nullptr; // Dreamcast uses Maple Bus, not USB — handled separately
+            inputMode = mode;
+            return;
         default:
             return;
     }

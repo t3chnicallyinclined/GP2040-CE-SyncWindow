@@ -16,6 +16,8 @@
 
 #include "pico/types.h"
 
+class DreamcastDriver;
+
 class GP2040 {
 public:
     GP2040(){}
@@ -66,6 +68,7 @@ private:
         SET_INPUT_MODE_PSCLASSIC,
         SET_INPUT_MODE_XBOXORIGINAL,
         SET_INPUT_MODE_SWITCH_PRO,
+        SET_INPUT_MODE_DREAMCAST,
     };
     BootAction getBootAction();
     void getReinitGamepad(Gamepad * gamepad);
@@ -91,6 +94,10 @@ private:
     void handleSystemReboot(GPEvent* e);
 
     System::BootMode rebootMode = System::BootMode::DEFAULT;
+
+    // Dreamcast Maple Bus mode
+    bool dreamcastMode = false;
+    DreamcastDriver* dreamcastDriver = nullptr;
 };
 
 #endif

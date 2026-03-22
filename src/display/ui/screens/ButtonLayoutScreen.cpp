@@ -4,6 +4,7 @@
 #include "drivers/ps4/PS4Driver.h"
 #include "drivers/xbone/XBOneDriver.h"
 #include "drivers/xinput/XInputDriver.h"
+#include "drivers/dreamcast/DreamcastDriver.h"
 
 void ButtonLayoutScreen::init() {
     isInputHistoryEnabled = Storage::getInstance().getDisplayOptions().inputHistoryEnabled;
@@ -25,14 +26,17 @@ void ButtonLayoutScreen::init() {
     setViewport((isInputHistoryEnabled ? 8 : 0), 0, (isInputHistoryEnabled ? 56 : getRenderer()->getDriver()->getMetrics()->height), getRenderer()->getDriver()->getMetrics()->width);
 
 	// load layout (drawElement pushes element to the display list)
-    uint16_t elementCtr = 0;
-    LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
-    LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
-    for (elementCtr = 0; elementCtr < currLayoutLeft.size(); elementCtr++) {
-        pushElement(currLayoutLeft[elementCtr]);
-    }
-    for (elementCtr = 0; elementCtr < currLayoutRight.size(); elementCtr++) {
-        pushElement(currLayoutRight[elementCtr]);
+    // Skip widget loading in Dreamcast debug mode — we use the full display for debug text
+    if (inputMode != INPUT_MODE_DREAMCAST) {
+        uint16_t elementCtr = 0;
+        LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
+        LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
+        for (elementCtr = 0; elementCtr < currLayoutLeft.size(); elementCtr++) {
+            pushElement(currLayoutLeft[elementCtr]);
+        }
+        for (elementCtr = 0; elementCtr < currLayoutRight.size(); elementCtr++) {
+            pushElement(currLayoutRight[elementCtr]);
+        }
     }
 
 	// start with profile mode displayed
@@ -204,6 +208,17 @@ void ButtonLayoutScreen::generateHeader() {
                     statusBar += "INPUT";
                 break;
             case INPUT_MODE_KEYBOARD: statusBar += "HID-KB"; break;
+            case INPUT_MODE_DREAMCAST:
+                if (DreamcastDriver::instance) {
+                    // S=sync E=end B=maxbytes X=lastxor R=rx
+                    statusBar += "S:" + std::to_string(DreamcastDriver::instance->debugSyncCount);
+                    statusBar += " E:" + std::to_string(DreamcastDriver::instance->debugEndCount);
+                    statusBar += " B:" + std::to_string(DreamcastDriver::instance->debugMaxBytes);
+                    statusBar += " R:" + std::to_string(DreamcastDriver::instance->debugRxCount);
+                } else {
+                    statusBar += "DC-NOINIT";
+                }
+                break;
             case INPUT_MODE_CONFIG: statusBar += "CONFIG"; break;
         }
     }
@@ -260,6 +275,48 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
+    // Dreamcast debug: take over entire display (y = row number 0-7, not pixels)
+    if (inputMode == INPUT_MODE_DREAMCAST && DreamcastDriver::instance) {
+        auto* dc = DreamcastDriver::instance;
+        uint8_t ps = dc->debugPinState;
+        std::string line0 = "MAPLE A:";
+        line0 += (ps & 1) ? "H" : "L";
+        line0 += " B:";
+        line0 += (ps & 2) ? "H" : "L";
+        line0 += " F:" + std::to_string(dc->debugFifoCount);
+
+        std::string line1 = "Sy:" + std::to_string(dc->debugSyncCount);
+        line1 += " End:" + std::to_string(dc->debugEndCount);
+
+        std::string line2 = "MB:" + std::to_string(dc->debugMaxBytes);
+        line2 += " Xr:" + std::to_string(dc->debugLastXor);
+        line2 += " Bc:" + std::to_string(dc->debugLastBitCnt);
+
+        std::string line3 = "Rx:" + std::to_string(dc->debugRxCount);
+        line3 += " Tx:" + std::to_string(dc->debugTxCount);
+        line3 += " Cm:" + std::to_string((int)dc->debugLastRxCmd);
+
+        std::string line4 = "PT:" + std::to_string(dc->debugPollTrue);
+        line4 += " XF:" + std::to_string(dc->debugXorFail);
+        line4 += " FL:" + std::to_string(dc->debugFlushCount);
+
+        char hexBuf[16];
+        snprintf(hexBuf, sizeof(hexBuf), "DC:%04X", dc->debugDcButtons);
+        std::string line5 = hexBuf;
+        snprintf(hexBuf, sizeof(hexBuf), " GP:%02X", (uint8_t)(dc->debugGpButtons & 0xFF));
+        line5 += hexBuf;
+        snprintf(hexBuf, sizeof(hexBuf), " D:%X", dc->debugGpDpad);
+        line5 += hexBuf;
+
+        getRenderer()->drawText(0, 0, line0);
+        getRenderer()->drawText(0, 1, line1);
+        getRenderer()->drawText(0, 2, line2);
+        getRenderer()->drawText(0, 3, line3);
+        getRenderer()->drawText(0, 4, line4);
+        getRenderer()->drawText(0, 5, line5);
+        return;
+    }
+
     if (bannerDisplay) {
         getRenderer()->drawRectangle(0, 0, 128, 7, true, true);
     	getRenderer()->drawText(0, 0, statusBar, true);

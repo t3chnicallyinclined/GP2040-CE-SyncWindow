@@ -1,0 +1,125 @@
+;
+; Maple Bus TX/RX PIO code by Charlie Cole
+; From charcole/Dreamcast-PopnMusic (working bare-Pico implementation)
+;
+
+.program maple_tx
+.side_set 1
+.define HOLD    12 ; Cycles to hold after clocking data
+.define SETTLE   6 ; Cycles to hold data before clocking
+.define MID      6 ; Cycles before starting transitions for next bit
+
+    set pindirs, 0      side 1 ; Set to input
+
+    ; set up loop
+    pull                side 1 [HOLD] ; Will block here until packet ready to send
+    out x,32            side 1 ; size of packet in bit pairs - 1
+    set pindirs, 3      side 1 ; Set pins to output (drive the bus)
+
+    ; Send the sync pulses to start the packet
+    set y,3             side 1
+    set pins, 2         side 1 [HOLD]
+syncloop:
+    nop                 side 0 [HOLD]
+    jmp y-- syncloop    side 1 [HOLD]
+    set pins, 3         side 1 [MID]
+    nop                 side 0 [HOLD]
+
+    ; Send the actual data
+dataloop:
+    out y, 1            side 0
+    set pins, 1         side 0 [MID-1]
+    jmp !y, send_zero   side 0
+
+    ; Send a one
+    nop                 side 1 [SETTLE]
+    set pins, 2         side 1 [HOLD]
+    jmp outro           side 1 [MID]
+
+send_zero:
+    nop                 side 0 [SETTLE]
+    set pins, 0         side 0 [HOLD]
+    nop                 side 1 [MID]
+
+outro:
+    out pins, 1         side 1 [SETTLE]
+    jmp x-- dataloop    side 0 [HOLD-1]
+
+    ; Send the tail sequence to signify end of packet
+    set pins, 1         side 0 [HOLD]
+    nop                 side 1 [HOLD]
+    nop                 side 0 [HOLD]
+    set pins, 0         side 0 [HOLD]
+    set pins, 1         side 0 [HOLD]
+    set pins, 0         side 0 [HOLD]
+    set pins, 1         side 0 [HOLD]
+    set pins, 3         side 1 [HOLD]
+
+% c-sdk {
+static inline void maple_tx_program_init(PIO pio, uint sm, uint offset, uint pin_a, uint pin_b, float clk_div)
+{
+    pio_sm_config c = maple_tx_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&c, pin_a, 1);
+    sm_config_set_set_pins(&c, pin_a, 2);
+    sm_config_set_sideset_pins(&c, pin_b);
+
+    sm_config_set_out_shift(&c, false, true, 32);
+    sm_config_set_clkdiv(&c, clk_div);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    // Set the pin direction to input at the PIO but high when used as output
+    pio_sm_set_pins_with_mask(pio, sm, (1u << pin_a) | (1u << pin_b), (1u << pin_a) | (1u << pin_b));
+    pio_sm_set_pindirs_with_mask(pio, sm, 0, (1u << pin_a) | (1u << pin_b));
+
+    // Connect PIO to the pads
+    pio_gpio_init(pio, pin_a);
+    pio_gpio_init(pio, pin_b);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true); // SM starts running, stalls at pull
+}
+%}
+
+; RX: Three cooperating state machines
+; SM0 shifts in pin state on signal from SM1/SM2
+; SM1 watches pin A for transitions
+; SM2 watches pin B for transitions
+
+.program maple_rx_triple1
+    wait 1 irq 7
+    in pins, 2
+
+.program maple_rx_triple2
+    wait 0 pin 0
+    irq 7
+    wait 1 pin 0
+    irq 7
+
+.program maple_rx_triple3
+    wait 0 pin 1
+    irq 7
+    wait 1 pin 1
+    irq 7
+
+% c-sdk {
+static inline void maple_rx_triple_program_init(PIO pio, uint* offsets, uint pin_a, uint pin_b, float clk_div)
+{
+    for (int sm = 0; sm < 3; sm++)
+    {
+        pio_sm_set_consecutive_pindirs(pio, sm, pin_a, 2, false);
+
+        pio_sm_config c =
+            (sm == 0) ? maple_rx_triple1_program_get_default_config(offsets[0]) :
+            ((sm == 1) ? maple_rx_triple2_program_get_default_config(offsets[1]) :
+            maple_rx_triple3_program_get_default_config(offsets[2]));
+
+        sm_config_set_in_pins(&c, pin_a);
+        sm_config_set_in_shift(&c, false, true, 32); // autopush every 32 bits (16 x 2-bit samples per FIFO word)
+        sm_config_set_clkdiv(&c, clk_div);
+        sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+        pio_sm_init(pio, sm, offsets[sm], &c);
+    }
+}
+%}

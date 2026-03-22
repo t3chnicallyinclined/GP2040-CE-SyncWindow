@@ -40,6 +40,10 @@ message GamepadOptions
     optional InputModeDeviceType inputDeviceType = 33;
     optional uint32 nobdSyncDelay = 34;
     optional bool nobdReleaseDebounce = 35;
+    optional uint32 dreamcastPinA = 36;
+    optional uint32 dreamcastPinB = 37;
+    optional uint32 dcSyncMode = 38;
+    optional uint32 dcSyncWindow = 39;
 }
 
 message KeyboardMapping

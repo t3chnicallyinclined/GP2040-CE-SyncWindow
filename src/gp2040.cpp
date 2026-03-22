@@ -10,6 +10,7 @@
 #include "addonmanager.h"
 #include "types.h"
 #include "usbhostmanager.h"
+#include "drivers/dreamcast/DreamcastDriver.h"
 
 // Inputs for Core0
 #include "addons/analog.h"
@@ -127,6 +128,7 @@ void GP2040::setup() {
 	addons.LoadAddon(new InputMacro());
 
 	InputMode inputMode = gamepad->getOptions().inputMode;
+
 	const BootAction bootAction = getBootAction();
 	switch (bootAction) {
 		case BootAction::ENTER_WEBCONFIG_MODE:
@@ -183,13 +185,26 @@ void GP2040::setup() {
 		case BootAction::SET_INPUT_MODE_SWITCH_PRO:
 			inputMode = INPUT_MODE_SWITCH_PRO;
 			break;
+		case BootAction::SET_INPUT_MODE_DREAMCAST:
+			inputMode = INPUT_MODE_DREAMCAST;
+			break;
 		case BootAction::NONE:
 		default:
 			break;
 	}
 
-	// Setup USB Driver
+	// Always register the mode with DriverManager (for display, LEDs, etc.)
 	DriverManager::getInstance().setup(inputMode);
+
+	// Dreamcast mode: bypass USB, use Maple Bus instead
+	if (inputMode == INPUT_MODE_DREAMCAST) {
+		dreamcastMode = true;
+		GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
+		dreamcastDriver = new DreamcastDriver();
+		dreamcastDriver->setSyncMode(opts.dcSyncMode);
+		dreamcastDriver->setSyncWindow(opts.dcSyncWindow);
+		dreamcastDriver->init(opts.dreamcastPinA, opts.dreamcastPinB);
+	}
 
 	// save to match user expectations on choosing mode at boot, and this is
 	// before USB host will be used so we can force it to ignore the check
@@ -356,11 +371,62 @@ void GP2040::syncGpioGetAll() {
 }
 
 void GP2040::run() {
-	bool configMode = DriverManager::getInstance().isConfigMode();
-	GPDriver * inputDriver = DriverManager::getInstance().getDriver();
 	Gamepad * gamepad = Storage::getInstance().GetGamepad();
 	Gamepad * processedGamepad = Storage::getInstance().GetProcessedGamepad();
 	GamepadState prevState;
+
+	if (dreamcastMode) {
+		// ==========================================
+		// Dreamcast Maple Bus main loop
+		// NO USB init, NO TinyUSB, NO USB Host
+		// Same input pipeline, Maple Bus output
+		// ==========================================
+		while (1) {
+			this->getReinitGamepad(gamepad);
+			memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
+
+			// Input processing: NOBD sync window OR stock debounce
+			if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
+				syncGpioGetAll();
+			} else {
+				debounceGpioGetAll();
+			}
+			gamepad->read();
+
+			// Force digital dpad for Dreamcast — DC controller has digital dpad only.
+			// Without this, Left Analog dpad mode routes directions to lx/ly
+			// and state.dpad stays 0, making DC dpad buttons unresponsive.
+			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
+
+			checkRawState(prevState, gamepad->state);
+
+			// Pre-Process add-ons for MPGS
+			addons.PreprocessAddons();
+
+			gamepad->hotkey();
+			rebootHotkeys.process(gamepad, false);
+
+			gamepad->process();
+
+			// (Post) Process for add-ons
+			addons.ProcessAddons();
+
+			checkProcessedState(processedGamepad->state, gamepad->state);
+			memcpy(&processedGamepad->state, &gamepad->state, sizeof(GamepadState));
+
+			// Process Dreamcast Maple Bus (instead of USB driver)
+			if (dreamcastDriver) dreamcastDriver->process(gamepad);
+
+			// Check if we have a pending save
+			checkSaveRebootState();
+		}
+	}
+
+	// ==========================================
+	// Standard USB main loop (unchanged)
+	// ==========================================
+	bool configMode = DriverManager::getInstance().isConfigMode();
+	GPDriver * inputDriver = DriverManager::getInstance().getDriver();
 
 	// Start the TinyUSB Device functionality
 	tud_init(TUD_OPT_RHPORT);
@@ -538,6 +604,8 @@ GP2040::BootAction GP2040::getBootAction() {
                                     return BootAction::SET_INPUT_MODE_XBONE;
                                 case INPUT_MODE_SWITCH_PRO:
                                     return BootAction::SET_INPUT_MODE_SWITCH_PRO;
+                                case INPUT_MODE_DREAMCAST:
+                                    return BootAction::SET_INPUT_MODE_DREAMCAST;
                                 default:
                                     return BootAction::NONE;
                             }

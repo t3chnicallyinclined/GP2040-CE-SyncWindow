@@ -204,6 +204,8 @@ src/drivers/xboxog/XboxOriginalDriver.cpp
 src/drivers/xinput/XInputAuth.cpp
 src/drivers/xinput/XInputAuthUSBListener.cpp
 src/drivers/xinput/XInputDriver.cpp
+src/drivers/dreamcast/maple_bus.cpp
+src/drivers/dreamcast/DreamcastDriver.cpp
 src/interfaces/i2c/i2cdevicebase.cpp
 src/interfaces/i2c/pcf8575/pcf8575.cpp
 src/interfaces/i2c/ssd1306/obd_ssd1306.cpp
@@ -280,6 +282,9 @@ ${PROTO_OUTPUT_DIR}/config.pb.c
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${PROJECT_NAME}_${CMAKE_PROJECT_VERSION}_${GP2040_BOARDCONFIG})
 
+# Generate PIO header for Dreamcast Maple Bus
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/src/drivers/dreamcast/maple.pio)
+
 pico_set_program_name(${PROJECT_NAME} "GP2040-CE-NOBD")
 pico_set_program_version(${PROJECT_NAME} ${GIT_REPO_VERSION})
 
@@ -298,6 +303,8 @@ ArduinoJson
 rndis
 hardware_adc
 hardware_pwm
+hardware_pio
+hardware_dma
 PicoPeripherals
 WiiExtension
 SNESpad
@@ -311,6 +318,7 @@ headers/addons
 headers/configs
 headers/drivers
 headers/drivers/shared
+headers/drivers/dreamcast
 headers/events
 headers/interfaces
 headers/interfaces/i2c
