@@ -65,6 +65,7 @@ void DisplayAddon::setup() {
     displaySaverTimer = options.displaySaverTimeout;
     displaySaverTimeout = displaySaverTimer;
     configMode = DriverManager::getInstance().isConfigMode();
+    inputMode = DriverManager::getInstance().getInputMode();
     turnOffWhenSuspended = options.turnOffWhenSuspended;
     displaySaverMode = options.displaySaverMode;
 
@@ -201,6 +202,18 @@ void DisplayAddon::process() {
     if (gpDisplay->getDriver() == nullptr ||
         (!configMode && isDisplayPowerOff())) {
         return;
+    }
+
+    // Rate-limit display updates in Dreamcast mode to avoid blocking the main loop.
+    // OLED I2C draws take 10-50ms, but the DC expects responses within ~1ms.
+    // Only redraw every 100ms (~10 FPS) — keeps diagnostics visible without
+    // causing the DC to timeout and disconnect.
+    if (inputMode == INPUT_MODE_DREAMCAST) {
+        uint32_t nowMs = to_ms_since_boot(get_absolute_time());
+        if ((nowMs - dcLastDrawMs) < 100) {
+            return;  // Skip this iteration — too soon since last draw
+        }
+        dcLastDrawMs = nowMs;
     }
 
     // Core0 requested a new display mode

@@ -210,11 +210,7 @@ void ButtonLayoutScreen::generateHeader() {
             case INPUT_MODE_KEYBOARD: statusBar += "HID-KB"; break;
             case INPUT_MODE_DREAMCAST:
                 if (DreamcastDriver::instance) {
-                    // S=sync E=end B=maxbytes X=lastxor R=rx
-                    statusBar += "S:" + std::to_string(DreamcastDriver::instance->debugSyncCount);
-                    statusBar += " E:" + std::to_string(DreamcastDriver::instance->debugEndCount);
-                    statusBar += " B:" + std::to_string(DreamcastDriver::instance->debugMaxBytes);
-                    statusBar += " R:" + std::to_string(DreamcastDriver::instance->debugRxCount);
+                    statusBar += "DC Rx:" + std::to_string(DreamcastDriver::instance->debugRxCount);
                 } else {
                     statusBar += "DC-NOINIT";
                 }
@@ -275,45 +271,46 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
-    // Dreamcast debug: take over entire display (y = row number 0-7, not pixels)
+    // Dreamcast debug: take over entire display
     if (inputMode == INPUT_MODE_DREAMCAST && DreamcastDriver::instance) {
         auto* dc = DreamcastDriver::instance;
-        uint8_t ps = dc->debugPinState;
-        std::string line0 = "MAPLE A:";
-        line0 += (ps & 1) ? "H" : "L";
-        line0 += " B:";
-        line0 += (ps & 2) ? "H" : "L";
-        line0 += " F:" + std::to_string(dc->debugFifoCount);
 
-        std::string line1 = "Sy:" + std::to_string(dc->debugSyncCount);
-        line1 += " End:" + std::to_string(dc->debugEndCount);
+        // Line 0: Rx/Tx counts and XOR failures
+        std::string line0 = "Rx:" + std::to_string(dc->debugRxCount);
+        line0 += " Tx:" + std::to_string(dc->debugTxCount);
+        line0 += " XF:" + std::to_string(dc->debugXorFail);
 
-        std::string line2 = "MB:" + std::to_string(dc->debugMaxBytes);
-        line2 += " Xr:" + std::to_string(dc->debugLastXor);
-        line2 += " Bc:" + std::to_string(dc->debugLastBitCnt);
+        // Line 1: Per-command breakdown (what is DC sending us?)
+        std::string line1 = "c1:" + std::to_string(dc->debugCmd1Count);
+        line1 += " c2:" + std::to_string(dc->debugCmd2Count);
+        line1 += " c9:" + std::to_string(dc->debugCmd9Count);
 
-        std::string line3 = "Rx:" + std::to_string(dc->debugRxCount);
-        line3 += " Tx:" + std::to_string(dc->debugTxCount);
-        line3 += " Cm:" + std::to_string((int)dc->debugLastRxCmd);
+        // Line 2: VMU diagnostics + filtered packets
+        std::string line2 = "Vr:" + std::to_string(dc->vmu.debugVmuRxCount);
+        line2 += " Vt:" + std::to_string(dc->vmu.debugVmuTxCount);
+        line2 += " Vw:" + std::to_string(dc->vmu.debugVmuWriteCount);
+        line2 += " f:" + std::to_string(dc->debugFilteredCount);
 
-        std::string line4 = "PT:" + std::to_string(dc->debugPollTrue);
-        line4 += " XF:" + std::to_string(dc->debugXorFail);
-        line4 += " FL:" + std::to_string(dc->debugFlushCount);
+        // Line 3: Loop timing + consecutive polls before re-probe
+        // LP = worst-case loop µs, CP = consecutive CMD 9 polls before CMD 1
+        char hexBuf[32];
+        snprintf(hexBuf, sizeof(hexBuf), "LP:%lu CP:%lu",
+                 (unsigned long)dc->debugLoopMaxUs,
+                 (unsigned long)dc->debugMaxConsecutivePolls);
+        std::string line3 = hexBuf;
 
-        char hexBuf[16];
-        snprintf(hexBuf, sizeof(hexBuf), "DC:%04X", dc->debugDcButtons);
-        std::string line5 = hexBuf;
-        snprintf(hexBuf, sizeof(hexBuf), " GP:%02X", (uint8_t)(dc->debugGpButtons & 0xFF));
-        line5 += hexBuf;
-        snprintf(hexBuf, sizeof(hexBuf), " D:%X", dc->debugGpDpad);
-        line5 += hexBuf;
+        // Line 4: DC buttons, gamepad state, last command
+        snprintf(hexBuf, sizeof(hexBuf), "DC:%04X cr:%d co:%lu",
+                 dc->debugDcButtons,
+                 (int)dc->debugLastRxCmd,
+                 (unsigned long)dc->debugCmdOtherCount);
+        std::string line4 = hexBuf;
 
         getRenderer()->drawText(0, 0, line0);
         getRenderer()->drawText(0, 1, line1);
         getRenderer()->drawText(0, 2, line2);
         getRenderer()->drawText(0, 3, line3);
         getRenderer()->drawText(0, 4, line4);
-        getRenderer()->drawText(0, 5, line5);
         return;
     }
 

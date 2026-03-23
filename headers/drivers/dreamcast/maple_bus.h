@@ -90,6 +90,24 @@ typedef struct __attribute__((packed)) {
     uint8_t  joyX;           // Left analog X (0=left, 128=center, 255=right)
 } MapleControllerCondition;
 
+// VMU memory info payload (7 words: func code + 6 media info words)
+typedef struct __attribute__((packed)) {
+    uint32_t funcCode;
+    uint32_t mediaInfo[6];
+} MapleMemoryInfo;
+
+// VMU block read payload (func code + location + 128 data words = 130 words)
+typedef struct __attribute__((packed)) {
+    uint32_t funcCode;
+    uint32_t location;
+    uint32_t data[128];  // 512 bytes = one VMU block
+} MapleBlockReadData;
+
+// VMU file error payload (1 word: error code)
+typedef struct __attribute__((packed)) {
+    uint32_t errorCode;
+} MapleFileError;
+
 // Pre-built packet structures (with BitPairsMinus1 prefix and CRC suffix)
 typedef struct __attribute__((aligned(4))) {
     uint32_t           bitPairsMinus1;
@@ -111,6 +129,27 @@ typedef struct __attribute__((aligned(4))) {
     uint32_t                  crc;
 } MapleControllerPacket;
 
+typedef struct __attribute__((aligned(4))) {
+    uint32_t          bitPairsMinus1;
+    MaplePacketHeader header;
+    MapleMemoryInfo   memInfo;
+    uint32_t          crc;
+} MapleMemoryInfoPacket;
+
+typedef struct __attribute__((aligned(4))) {
+    uint32_t           bitPairsMinus1;
+    MaplePacketHeader  header;
+    MapleBlockReadData blockRead;
+    uint32_t           crc;
+} MapleBlockReadPacket;
+
+typedef struct __attribute__((aligned(4))) {
+    uint32_t          bitPairsMinus1;
+    MaplePacketHeader header;
+    MapleFileError    fileError;
+    uint32_t          crc;
+} MapleFileErrorPacket;
+
 // RX decoder states
 enum MapleRxState {
     MAPLE_RX_IDLE,
@@ -122,8 +161,18 @@ enum MapleRxState {
     MAPLE_RX_DATA_BIT_B,
 };
 
-// RX receive buffer size
+// RX receive buffer size (must handle VMU block write: header + func + loc + 32 data words + CRC)
 #define MAPLE_RX_BUF_SIZE  256
+
+// TX buffer size (must handle VMU block read: bitPairs + header + func + loc + 128 data words + CRC)
+#define MAPLE_TX_BUF_SIZE  140
+
+// RX DMA ring buffer size (must be power of 2).
+// 256 words = 4096 samples = ~2ms of buffering at Maple Bus rate.
+// Prevents FIFO overflow when main loop has latency spikes (display updates, etc.)
+#define MAPLE_RX_DMA_BUF_WORDS  256
+#define MAPLE_RX_DMA_BUF_BYTES  (MAPLE_RX_DMA_BUF_WORDS * 4)  // 1024
+#define MAPLE_RX_DMA_RING_BITS  10  // log2(1024) = 10
 
 // Maple Bus transport layer
 class MapleBus {
@@ -167,10 +216,19 @@ private:
     PIO rxPio;
     uint txSm;
     uint txDmaChannel;
+    uint rxDmaChannel;
     uint pinA;
     uint pinB;
 
     bool initialized;
+
+    // RX SM program offsets (needed for proper restart after TX)
+    uint rxSmOffsets[3];
+
+    // RX DMA ring buffer — continuously drains PIO FIFO to prevent overflow.
+    // Must be aligned to buffer size for DMA ring mode.
+    uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(MAPLE_RX_DMA_BUF_BYTES)));
+    volatile uint rxDmaReadPos;  // Our read index into the ring buffer
 
     // RX decoder state
     MapleRxState rxState;

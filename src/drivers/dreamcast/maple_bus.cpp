@@ -4,11 +4,12 @@
 #include "pico/time.h"
 
 MapleBus::MapleBus()
-    : txPio(pio0), rxPio(pio1), txSm(0), txDmaChannel(0),
-      pinA(0), pinB(0), initialized(false),
+    : txPio(pio0), rxPio(pio1), txSm(0), txDmaChannel(0), rxDmaChannel(0),
+      pinA(0), pinB(0), initialized(false), rxDmaReadPos(0),
       rxState(MAPLE_RX_IDLE), syncCount(0), bitCount(0),
       currentByte(0), xorCheck(0), writePos(0), packetComplete(false), fifoReadCount(0) {
     memset(rxDecodedBuf, 0, sizeof(rxDecodedBuf));
+    memset(rxDmaBuf, 0, sizeof(rxDmaBuf));
 }
 
 bool MapleBus::init(uint pin_a, uint pin_b) {
@@ -42,18 +43,39 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     gpio_pull_up(pinB);
 
     // RX: Use PIO1, 3 state machines
+    // clkdiv=1.0 for maximum sampling speed (full 125 MHz).
+    // At clkdiv=3.0, SM0 responds to IRQ7 ~72ns late, risking missed transitions.
+    // Reference: "Sample as fast as possible" at clkdiv=1.0.
     rxPio = pio1;
-    uint rxOffsets[3] = {
-        pio_add_program(rxPio, &maple_rx_triple1_program),
-        pio_add_program(rxPio, &maple_rx_triple2_program),
-        pio_add_program(rxPio, &maple_rx_triple3_program)
-    };
-    maple_rx_triple_program_init(rxPio, rxOffsets, pinA, pinB, 3.0f);
+    rxSmOffsets[0] = pio_add_program(rxPio, &maple_rx_triple1_program);
+    rxSmOffsets[1] = pio_add_program(rxPio, &maple_rx_triple2_program);
+    rxSmOffsets[2] = pio_add_program(rxPio, &maple_rx_triple3_program);
+    maple_rx_triple_program_init(rxPio, rxSmOffsets, pinA, pinB, 1.0f);
 
-    // Enable RX state machines
+    // RX DMA: continuously drain SM0's RX FIFO into a ring buffer.
+    // This prevents FIFO overflow when the main loop has latency spikes
+    // (display updates, USB processing, etc.). Without DMA, a 9-byte
+    // Maple command (~154 samples) can overflow the 128-sample FIFO.
+    rxDmaChannel = dma_claim_unused_channel(true);
+    dma_channel_config rxDmaConfig = dma_channel_get_default_config(rxDmaChannel);
+    channel_config_set_read_increment(&rxDmaConfig, false);   // Fixed read: PIO FIFO
+    channel_config_set_write_increment(&rxDmaConfig, true);    // Incrementing write: RAM buffer
+    channel_config_set_transfer_data_size(&rxDmaConfig, DMA_SIZE_32);
+    channel_config_set_dreq(&rxDmaConfig, pio_get_dreq(rxPio, 0, false));  // DREQ from SM0 RX
+    channel_config_set_ring(&rxDmaConfig, true, MAPLE_RX_DMA_RING_BITS);   // Write address wraps
+    dma_channel_configure(rxDmaChannel, &rxDmaConfig,
+                          rxDmaBuf,          // Dest: ring buffer in RAM
+                          &rxPio->rxf[0],    // Source: PIO1 SM0 RX FIFO
+                          0xFFFFFFFF,         // Transfer count: run ~indefinitely
+                          false);             // Don't start yet — SMs not enabled
+
+    rxDmaReadPos = 0;
+
+    // Enable RX state machines, then start RX DMA
     pio_sm_set_enabled(rxPio, 1, true);
     pio_sm_set_enabled(rxPio, 2, true);
     pio_sm_set_enabled(rxPio, 0, true);
+    dma_channel_start(rxDmaChannel);
 
     initialized = true;
     return true;
@@ -67,11 +89,30 @@ void MapleBus::sendPacket(const uint32_t* words, uint numWords) {
     //
     // Word 0 (bitPairsMinus1) is NOT swapped — it's a PIO loop counter value,
     // consumed by `out x,32`, not transmitted as wire data.
-    static uint32_t txBuf[64];
-    uint count = (numWords <= 64) ? numWords : 64;
+    static uint32_t txBuf[MAPLE_TX_BUF_SIZE];
+    uint count = (numWords <= MAPLE_TX_BUF_SIZE) ? numWords : MAPLE_TX_BUF_SIZE;
     txBuf[0] = words[0]; // bitPairsMinus1: value for PIO, not byte data
     for (uint i = 1; i < count; i++) {
         txBuf[i] = __builtin_bswap32(words[i]);
+    }
+
+    // Disable RX state machines before transmitting to prevent echo capture.
+    // The RX PIO shares the same bus pins and would decode our own TX as
+    // incoming data, creating false packets that confuse the protocol.
+    pio_sm_set_enabled(rxPio, 0, false);
+    pio_sm_set_enabled(rxPio, 1, false);
+    pio_sm_set_enabled(rxPio, 2, false);
+
+    // Bus line check: verify both pins are HIGH (idle) before driving.
+    // If the DC hasn't finished its end-of-packet tail, we'd cause bus contention.
+    // Reference: 10µs open-line verification before every TX.
+    {
+        uint64_t startUs = time_us_64();
+        while ((time_us_64() - startUs) < 10) {
+            if (!gpio_get(pinA) || !gpio_get(pinB)) {
+                startUs = time_us_64();  // Reset timer if bus not idle
+            }
+        }
     }
 
     // TX SM is stalled at `pull` with both pins HIGH (idle state).
@@ -85,22 +126,21 @@ bool MapleBus::isTransmitting() {
 }
 
 void MapleBus::flushRx() {
-    // Wait for DMA to finish feeding the PIO TX FIFO
+    // Wait for TX DMA to finish feeding the PIO TX FIFO
     while (dma_channel_is_busy(txDmaChannel)) { tight_loop_contents(); }
-    // Wait for PIO TX FIFO to drain (PIO consuming remaining words)
-    while (!pio_sm_is_tx_fifo_empty(txPio, txSm)) { tight_loop_contents(); }
-    // Wait for PIO to finish clocking out last bits + tail sequence
-    busy_wait_us(100);
 
-    // SM returns to `pull` stall with both pins HIGH after tail sequence.
-    // No need to stop/restart SM.
-
-    // Drain and discard all RX FIFO data (echo from our TX)
-    debugFlushCount = 0;
-    while (!pio_sm_is_rx_fifo_empty(rxPio, 0)) {
-        (void)pio_sm_get(rxPio, 0);
-        debugFlushCount++;
+    // Clear TXSTALL sticky bit, then wait for PIO to finish ALL data + tail sequence.
+    // TXSTALL gets set when the TX SM stalls at `pull` with empty FIFO — meaning
+    // all bit pairs have been clocked out AND the tail sequence is complete.
+    // This is precise: no timing guesswork, no risk of too-short or too-long waits.
+    txPio->fdebug = (1u << (PIO_FDEBUG_TXSTALL_LSB + txSm));
+    while (!(txPio->fdebug & (1u << (PIO_FDEBUG_TXSTALL_LSB + txSm)))) {
+        tight_loop_contents();
     }
+
+    // TX is fully complete. Bus is idle (both pins HIGH via pull-ups).
+    // RX SMs have been disabled since sendPacket() — no echo was captured.
+
     // Reset decoder state machine
     rxState = MAPLE_RX_IDLE;
     writePos = 0;
@@ -108,6 +148,35 @@ void MapleBus::flushRx() {
     currentByte = 0;
     xorCheck = 0;
     packetComplete = false;
+
+    // Skip any stale data in the RX DMA ring buffer.
+    // (There shouldn't be any since RX SMs were disabled, but be safe.)
+    uint dmaWriteIdx = ((uintptr_t)dma_hw->ch[rxDmaChannel].write_addr
+                        - (uintptr_t)rxDmaBuf) / sizeof(uint32_t);
+    rxDmaReadPos = dmaWriteIdx % MAPLE_RX_DMA_BUF_WORDS;
+
+    // Properly restart all 3 RX state machines (not just re-enable).
+    // When a PIO SM is disabled and re-enabled, it resumes from the exact
+    // instruction where it was frozen. SM1/SM2 (edge watchers) may be frozen
+    // at `irq 7` which fires immediately on re-enable, injecting spurious
+    // samples. SM0 may be at `in pins, 2`, sampling garbage.
+    // Reference: DreamPicoPort calls prestart() on every SM transition:
+    //   pio_sm_clear_fifos, pio_sm_restart, pio_sm_clkdiv_restart, jmp to start
+    for (int sm = 0; sm < 3; sm++) {
+        pio_sm_clear_fifos(rxPio, sm);
+        pio_sm_restart(rxPio, sm);
+        pio_sm_clkdiv_restart(rxPio, sm);
+        pio_sm_exec(rxPio, sm, pio_encode_jmp(rxSmOffsets[sm]));
+    }
+    // Clear IRQ 7 flag to prevent stale edge triggers
+    pio_interrupt_clear(rxPio, 7);
+
+    // Re-enable all RX state machines.
+    // Enable edge watchers (SM1, SM2) first, then sampler (SM0) — ensures
+    // SM0 doesn't sample before edge watchers are ready.
+    pio_sm_set_enabled(rxPio, 1, true);
+    pio_sm_set_enabled(rxPio, 2, true);
+    pio_sm_set_enabled(rxPio, 0, true);
 }
 
 // ============================================================
@@ -265,9 +334,15 @@ void MapleBus::decodeSample(uint8_t pins) {
 }
 
 bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
-    // Drain all available data from PIO RX FIFO and decode
-    while (!pio_sm_is_rx_fifo_empty(rxPio, 0)) {
-        uint32_t fifoWord = pio_sm_get(rxPio, 0);
+    // Read from the RX DMA ring buffer (DMA continuously drains PIO FIFO → RAM).
+    // This prevents FIFO overflow even when the main loop is slow.
+    uint dmaWriteIdx = ((uintptr_t)dma_hw->ch[rxDmaChannel].write_addr
+                        - (uintptr_t)rxDmaBuf) / sizeof(uint32_t);
+    dmaWriteIdx %= MAPLE_RX_DMA_BUF_WORDS;
+
+    while (rxDmaReadPos != dmaWriteIdx) {
+        uint32_t fifoWord = rxDmaBuf[rxDmaReadPos];
+        rxDmaReadPos = (rxDmaReadPos + 1) % MAPLE_RX_DMA_BUF_WORDS;
         fifoReadCount++;
 
         // Each 32-bit FIFO word contains 4 packed bytes (autopush at 32 bits)
@@ -290,7 +365,7 @@ bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
         }
     }
 
-    // FIFO empty — with 32-bit autopush, up to 15 samples can be stuck in ISR.
+    // DMA buffer drained — with 32-bit autopush, up to 15 samples can be stuck in ISR.
     // If we have a valid packet (enough bytes + XOR passes), accept it.
     if (writePos >= 5 && xorCheck == 0) {
         *outPacket = rxDecodedBuf;

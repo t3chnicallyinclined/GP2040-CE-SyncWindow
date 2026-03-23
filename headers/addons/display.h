@@ -221,6 +221,8 @@ private:
     DisplayMode nextDisplayMode;
     bool turnOffWhenSuspended;
     uint32_t bootMode;
+    uint8_t inputMode = 0;
+    uint32_t dcLastDrawMs = 0;  // Rate-limit display draws in Dreamcast mode
     DisplaySaverMode displaySaverMode;
     GPGFX_DisplayTypeOptions gpOptions;
     GamepadButtonMapping *mapMenuToggle;

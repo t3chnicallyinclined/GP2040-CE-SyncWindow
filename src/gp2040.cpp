@@ -201,8 +201,6 @@ void GP2040::setup() {
 		dreamcastMode = true;
 		GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
 		dreamcastDriver = new DreamcastDriver();
-		dreamcastDriver->setSyncMode(opts.dcSyncMode);
-		dreamcastDriver->setSyncWindow(opts.dcSyncWindow);
 		dreamcastDriver->init(opts.dreamcastPinA, opts.dreamcastPinB);
 	}
 
