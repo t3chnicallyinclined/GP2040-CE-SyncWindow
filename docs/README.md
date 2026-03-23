@@ -4,11 +4,11 @@
 
 I got kicked out of the GP2040-CE Discord. A big part of why — from what I could tell — was that I used AI to help write code. The implication was that using AI meant the work wasn't legitimate, that I didn't really understand what I was building, or that I was somehow cheating.
 
-I'm not a firmware engineer. I'm not an embedded systems expert. I don't have a computer science degree. But I had a problem I wanted to solve — reliable simultaneous button presses for fighting games — and later, native Dreamcast controller support without adapters. These are hard embedded firmware problems involving RP2040 PIO state machines, DMA ring buffers, bit-level protocol implementation, and real-time constraints measured in microseconds.
+I'm not a firmware engineer. I'm not an embedded systems expert. I don't have a computer science degree. I'm a cloud engineer who came back to Marvel vs. Capcom 2 after a 15-year hiatus and kept dropping dashes. That sent me down a rabbit hole — first into USB polling and frame boundaries, then into building a sync window to fix it, and eventually into writing a native Dreamcast Maple Bus driver so my fight stick could work on a real DC without an adapter. These are hard embedded firmware problems involving RP2040 PIO state machines, DMA ring buffers, bit-level protocol implementation, and real-time constraints measured in microseconds.
 
 I used AI to help me build it. Specifically, [Claude Code](https://claude.com/claude-code) — Anthropic's CLI agent. And I'm proud of it.
 
-The NOBD sync window works. The Dreamcast Maple Bus driver works. I tested them on real hardware, debugged them on real hardware, and shipped them. The AI didn't do that part — I did. But the AI helped me understand PIO programming, Maple Bus protocol specs, byte ordering pipelines, and dozens of other things I would have spent months learning from scratch.
+The NOBD sync window works — dashes come out clean in MvC2. The Dreamcast Maple Bus driver works — I played MvC2 on a real Dreamcast for 5+ minutes straight with no disconnects (first bug i was running into was constant disconnects/reconnects). I tested them on real hardware, debugged them on real hardware, and shipped them. The AI didn't do that part — I did. But the AI helped me understand PIO programming, Maple Bus protocol specs, byte ordering pipelines, and dozens of other things I would have spent months learning from scratch.
 
 **This docs folder exists to show you exactly how I did it**, so you can do it too.
 
@@ -31,7 +31,7 @@ It's not autocomplete. It's not a chatbot. It's an agent that can take multi-ste
 
 ---
 
-## How We Used It On This Project
+## How I Used It On This Project
 
 ### 1. The CLAUDE.md Context File
 
@@ -58,16 +58,16 @@ The most important file in this repo for AI-assisted development is [`CLAUDE.md`
 
 Claude Code has a persistent memory system at `~/.claude/projects/<project>/memory/`. Memory files survive between conversations — when you close the terminal and come back days later, Claude remembers what you were working on.
 
-We used memory files to store:
+I used memory files to store:
 - **Expert context** for the Dreamcast Maple Bus protocol — architecture, PIO details, byte ordering, known bugs, debugging history
-- **Architecture options** we evaluated (7 different approaches for Maple Bus RX)
-- **What worked and what didn't** — so we didn't repeat failed approaches
+- **Architecture options** I evaluated with Claude (7 different approaches for Maple Bus RX)
+- **What worked and what didn't** — so I didn't repeat failed approaches
 
 Memory is organized as markdown files with frontmatter (name, description, type). A `MEMORY.md` index file links them together. Claude reads relevant memories at the start of conversations.
 
 ### 3. Plan Files
 
-For complex multi-step tasks, we used Claude's plan mode (`/plan`). This creates a structured plan file that persists across the conversation. For the Dreamcast driver, our plan covered:
+For complex multi-step tasks, I used Claude's plan mode (`/plan`). This creates a structured plan file that persists across the conversation. For the Dreamcast driver, my plan covered:
 - Root cause analysis of the disconnect cycling bug
 - Prioritized fix list (which bugs to tackle first)
 - File-by-file change descriptions
@@ -77,13 +77,13 @@ Plans keep both you and the AI aligned on what's being done and why.
 
 ### 4. Expert Analysis Documents
 
-When we hit a wall with the Dreamcast disconnect cycling, we had Claude do a deep comparative analysis of our implementation vs. the reference implementation (MaplePad/DreamPicoPort). This produced a document ranking every bug by severity and likelihood.
+When I hit a wall with the Dreamcast disconnect cycling, I had Claude do a deep comparative analysis of my implementation vs. the reference implementation (MaplePad/DreamPicoPort). This produced a document ranking every bug by severity and likelihood.
 
-The top-ranked bug (PIO state machines not properly restarted after TX) turned out to be the actual root cause. The analysis document identified it before we even started debugging — we just had to work through the list.
+The top-ranked bug (PIO state machines not properly restarted after TX) turned out to be the actual root cause. The analysis identified it before I even started debugging — I just had to work through the list.
 
 ### 5. Sub-Agents for Parallel Research
 
-Claude Code can spawn sub-agents — independent research tasks that run in parallel. We used these to:
+Claude Code can spawn sub-agents — independent research tasks that run in parallel. I used these to:
 - Search the MaplePad reference implementation for specific protocol details
 - Look up Dreamcast controller port pinouts
 - Check community forums for related work
@@ -180,17 +180,17 @@ If you're working on a new feature:
 - Guarantee correctness — always test on hardware
 
 ### The human's job:
-- Define the problem ("I want my fight stick to work on Dreamcast")
-- Test on real hardware and report results accurately
-- Make judgment calls ("should we disable VMU for stability?")
-- Verify claims ("is the left analog actually working?")
-- Ship it
+- **Be the eyes, ears, and direction.** The AI can't see your hardware. I was the one watching the OLED flash `cr:9` to `cr:1` at a steady pace and telling Claude "this is cycling at the same rate as the polling — something is wrong at the transport layer, not the protocol layer." I didn't deeply understand PIO state machines, but I could observe patterns the AI couldn't. I also found the reference repos (MaplePad, DreamPicoPort) and fed them to Claude as examples — the AI didn't go looking for those, I did. And I constantly asked qualifying questions: "what are the tradeoffs of DMA vs polling?" "why clkdiv 3 instead of 1?" "what happens if we don't restart the state machines?" That's how you build enough of a high-level picture to steer the work, even if you're not writing the code yourself.
+- **Test on real hardware and report results accurately.** "CP=8, still cycling, cr flips between 1 and 9" gives the AI something to work with. "It doesn't work" doesn't.
+- **Make judgment calls.** "Disable VMU for now and isolate the controller connection first" — that's triage, and only the human with hardware in hand can make that call.
+- **Verify claims.** The AI will say something works. Trust but verify — flash the UF2 and test it yourself.
+- **Ship it.**
 
 ---
 
 ## You Don't Need to Be a Firmware Expert
 
-I'm not one. I'm a technically inclined person who wanted to solve a specific problem. The AI helped me bridge the gap between "I know what I want to build" and "I know how RP2040 PIO state machines work."
+I'm not one. I'm a cloud engineer who noticed the same thing everyone else was reporting — dashes drop constantly in MvC2 on PC/Steam when they never did on Dreamcast or arcade. My tech background told me this was probably a hardware timing issue, not a skill issue, and I went down the rabbit hole to prove it. Turns out it's a real problem — USB frame boundaries split simultaneous presses that the original hardware grouped naturally. Most modern fighting games solve this with input leniency, but MvC2 is a 25-year-old arcade game that doesn't. The [main README](../README.md) has the full technical breakdown. The AI helped me bridge the gap between understanding the problem and actually implementing the fix in RP2040 firmware.
 
 If you can:
 - Describe what you want clearly
@@ -202,6 +202,16 @@ If you can:
 
 That's not cheating. That's using the tools available to you.
 
+### The Real Productivity Story
+
+AI didn't make me 10x faster — it made this *feasible*. I'm technical enough to have figured out PIO state machines and Maple Bus protocol implementation on my own. But realistically? That's a couple months of evenings and weekends reading datasheets and debugging timing issues. And honestly, it wasn't that serious to me — I wasn't going to dedicate that kind of time to it.
+
+But because I'm proficient with agentic coding, I got the entire Dreamcast Maple Bus driver — PIO programs, DMA ring buffers, protocol implementation, the works — done in one day. Not because the AI wrote it and I watched. Because I knew how to direct it: write good context files, use memory to persist knowledge between sessions, use plans to stay on track, feed it real hardware test results, and iterate fast.
+
+The studies on AI coding productivity show modest gains — [26% more PRs per week](https://economics.mit.edu/sites/default/files/inline-files/draft_copilot_experiments.pdf) in Microsoft's best study, [21% faster](https://arxiv.org/html/2410.12944v2) in Google's internal RCT. But those studies measure experienced developers doing work they already know how to do. The real unlock is when AI lets you tackle problems you *wouldn't have attempted otherwise* — not because you can't, but because the time investment wasn't worth it. That's where the multiplier is infinite: from zero to shipped.
+
+Oh — and yes, even this document was written by AI. If that bothers you, I'm sorry. Show me on this doll where I hurt you.
+
 ---
 
 ## Project Links
@@ -209,4 +219,4 @@ That's not cheating. That's using the tools available to you.
 - **This repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
 - **Claude Code:** https://claude.com/claude-code
 - **GP2040-CE (upstream):** https://gp2040-ce.info/
-- **CLAUDE.md (our context file):** [../CLAUDE.md](../CLAUDE.md)
+- **CLAUDE.md (the context file):** [../CLAUDE.md](../CLAUDE.md)
