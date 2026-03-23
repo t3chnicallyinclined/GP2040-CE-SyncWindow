@@ -196,6 +196,10 @@ If you want to build the firmware yourself (e.g. for a different board), you'll 
 
 The PS4 authentication driver uses mbedtls v3 API calls, compatible with Pico SDK 2.x. No special steps are needed — just clone, build, and go.
 
+## Need Help Setting Up?
+
+If the build instructions aren't clear, or you want help configuring your dev environment and getting Claude Code up and running — whether it's for this project or something else entirely — reach out to me. I'm happy to help you get started.
+
 ## Finger Gap Tester
 
 Measure your natural finger gap with the **[Finger Gap Tester](https://github.com/t3chnicallyinclined/finger-gap-tester)** — available as a Python CLI or Rust GUI app. Detects strays, bounces, pre-fire, and recommends a NOBD sync window value.

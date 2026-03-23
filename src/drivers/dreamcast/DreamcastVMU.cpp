@@ -29,6 +29,9 @@ bool DreamcastVMU::needsFormat() {
     for (int i = 0; i < 16; i++) {
         if (systemBlock[i] != 0x55) return true;
     }
+    // Check format version — forces re-format when filesystem layout constants change
+    // (e.g., save_area_start, block count, etc.) or after a bug fix that changes on-flash data.
+    if (systemBlock[17] != VMU_FORMAT_VERSION) return true;
     return false;
 }
 
@@ -133,6 +136,8 @@ void DreamcastVMU::format() {
     memset(blockBuf, 0, VMU_BYTES_PER_BLOCK);
     // Signature: first 16 bytes all 0x55 (marks formatted VMU)
     memset(blockBuf, 0x55, 16);
+    // Format version at byte 17 — triggers re-format when constants change
+    blockBuf[17] = VMU_FORMAT_VERSION;
     // Date/time markers at byte offset 0x030 (word 12)
     // BCD format: century, year, month, day, hour, min, sec, weekday
     // Stored in native byte order (first byte at lowest address)
@@ -322,7 +327,12 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
 
     debugVmuRxCount++;
 
-    // Payload starts after the 4-byte header
+    // Payload starts after the 4-byte header.
+    // IMPORTANT: The software RX decoder stores bytes in wire (big-endian) order.
+    // When cast to uint32_t* on this little-endian platform, each word is byte-reversed
+    // relative to the DC's original value. Use __builtin_bswap32() when reading funcCode
+    // and location words. Do NOT bswap raw block data (BLOCK_WRITE payload) — it must
+    // stay in wire byte order so the BLOCK_READ round-trip preserves the original bytes.
     const uint32_t* payload = (const uint32_t*)(packet + sizeof(MaplePacketHeader));
     uint payloadWords = (rxLen - sizeof(MaplePacketHeader)) / sizeof(uint32_t);
 
@@ -340,8 +350,8 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
             return true;
 
         case MAPLE_CMD_GET_MEDIA_INFO: {
-            // Payload word 0 must be MAPLE_FUNC_MEMORY_CARD
-            if (payloadWords < 1 || payload[0] != MAPLE_FUNC_MEMORY_CARD) {
+            // Payload word 0 must be MAPLE_FUNC_MEMORY_CARD (bswap from wire order)
+            if (payloadWords < 1 || __builtin_bswap32(payload[0]) != MAPLE_FUNC_MEMORY_CARD) {
                 sendFileErrorResponse(0x00000001, port, bus);  // Function code not supported
                 debugVmuTxCount++;
                 return true;
@@ -352,12 +362,12 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
         }
 
         case MAPLE_CMD_BLOCK_READ: {
-            if (payloadWords < 2 || payload[0] != MAPLE_FUNC_MEMORY_CARD) {
+            if (payloadWords < 2 || __builtin_bswap32(payload[0]) != MAPLE_FUNC_MEMORY_CARD) {
                 sendFileErrorResponse(0x00000001, port, bus);
                 debugVmuTxCount++;
                 return true;
             }
-            uint32_t locWord = payload[1];
+            uint32_t locWord = __builtin_bswap32(payload[1]);
             uint16_t blockNum = locWord & 0xFFFF;
             uint8_t phase = (locWord >> 16) & 0xFF;
 
@@ -373,12 +383,12 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
         }
 
         case MAPLE_CMD_BLOCK_WRITE: {
-            if (payloadWords < 2 || payload[0] != MAPLE_FUNC_MEMORY_CARD) {
+            if (payloadWords < 2 || __builtin_bswap32(payload[0]) != MAPLE_FUNC_MEMORY_CARD) {
                 sendFileErrorResponse(0x00000001, port, bus);
                 debugVmuTxCount++;
                 return true;
             }
-            uint32_t locWord = payload[1];
+            uint32_t locWord = __builtin_bswap32(payload[1]);
             uint16_t blockNum = locWord & 0xFFFF;
             uint8_t phase = (locWord >> 16) & 0xFF;
 
@@ -424,12 +434,12 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
 
         case MAPLE_CMD_BLOCK_COMPLETE_WRITE: {
             // Commit the accumulated block write to flash
-            if (payloadWords < 2 || payload[0] != MAPLE_FUNC_MEMORY_CARD) {
+            if (payloadWords < 2 || __builtin_bswap32(payload[0]) != MAPLE_FUNC_MEMORY_CARD) {
                 sendFileErrorResponse(0x00000001, port, bus);
                 debugVmuTxCount++;
                 return true;
             }
-            uint32_t locWord = payload[1];
+            uint32_t locWord = __builtin_bswap32(payload[1]);
             uint16_t blockNum = locWord & 0xFFFF;
             uint8_t phase = (locWord >> 16) & 0xFF;
 

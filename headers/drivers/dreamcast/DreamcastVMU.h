@@ -34,6 +34,10 @@ class Gamepad;
 // Media info word offset within system block (in 32-bit words)
 #define VMU_MEDIA_INFO_OFFSET   16
 
+// Format version byte stored at system block byte offset 17 (after 16-byte 0x55 signature
+// and 1 unused byte). Incremented when filesystem layout constants change, forcing re-format.
+#define VMU_FORMAT_VERSION      2
+
 class DreamcastVMU {
 public:
     DreamcastVMU();

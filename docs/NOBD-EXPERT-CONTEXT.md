@@ -365,3 +365,105 @@ When verifying NOBD behavior:
 4. **Cross-platform** — test on PC, console, and Dreamcast (worst case for frame boundaries)
 
 The finger gap tester measures the RAW gap (what the PC sees after USB). With NOBD off, this is your natural finger gap. With NOBD on at value N, you should see gaps cluster near 0ms (both presses grouped) with occasional gaps near Nms (presses that straddled the window boundary).
+
+---
+
+## Part 4: Dreamcast Maple Bus — Native Controller Output
+
+GP2040-CE NOBD includes a native Dreamcast controller output mode that bypasses USB entirely and speaks the Sega Dreamcast's Maple Bus protocol directly via PIO. This is a separate output mode (`INPUT_MODE_DREAMCAST`) — when active, the RP2040 acts as a standard Dreamcast controller with VMU (Visual Memory Unit) emulation.
+
+### Why Native Dreamcast Matters for NOBD
+
+The Dreamcast is the **worst case** for the frame boundary problem. The DC polls controllers at exactly 60Hz (once per VBlank, ~16.67ms). There is **zero sub-frame detection** — if your two presses straddle a 16.67ms boundary, you get a guaranteed split frame. On USB at 1000Hz, you have 1ms boundaries (a 6% chance per press pair at 1ms gap). On Dreamcast, you have 16.67ms boundaries — same problem, longer window. NOBD's sync window is equally valuable here.
+
+### Architecture Overview
+
+**Dual-PIO design:**
+- PIO0 (TX): Sends Maple Bus packets — DMA feeds 32-bit words to SM0, which bit-bangs the two-wire protocol (SDCKA/SDCKB) at 480ns/bit
+- PIO1 (RX): Three state machines decode incoming packets — SM1/SM2 detect pin transitions (edges), SM0 samples both pins on each edge. DMA ring buffer (256 words) drains SM0's FIFO to RAM continuously
+- Software decoder in `pollReceive()` processes the raw pin samples into decoded packets
+
+**Main loop integration:**
+When `INPUT_MODE_DREAMCAST` is active, `gp2040.cpp` runs a separate `while(1)` loop that replaces USB with `dreamcastDriver->process(gamepad)`. The input pipeline (NOBD sync or stock debounce → addons → SOCD) is identical — only the output stage changes.
+
+### Maple Bus Protocol Essentials
+
+- **Two-wire, self-clocking** at ~2 Mbps (480ns/bit). Open-drain with pull-ups (idle = both HIGH)
+- **Packet format:** `[BitPairsMinus1] [Header: numWords|origin|destination|command] [Payload] [CRC]`
+- **Addressing:** DC host = 0x00, Controller = 0x20, VMU sub-peripheral = 0x01
+- **Key commands:** DEVICE_REQUEST (1), GET_CONDITION (9), BLOCK_READ (10), BLOCK_WRITE (11)
+- **Response timing:** DC expects a response within ~1ms of sending a command
+
+### The RX Byte Order Bug (Root Cause of VMU Failures)
+
+**Discovery:** Controller worked perfectly but VMU reported "not enough blocks available" (MvC2) and "file system error" when trying to save or load.
+
+**Root cause:** The software RX decoder stores bytes in **wire (big-endian) order** — first received byte at lowest index. When this buffer is cast to `uint32_t*` on the little-endian RP2040, each payload word equals `bswap32(original_DC_value)`. For example, `MAPLE_FUNC_MEMORY_CARD = 0x00000002` arrives as `0x02000000` in our payload.
+
+**Why the controller worked anyway:** Controller command handlers (DEVICE_REQUEST, GET_CONDITION, etc.) don't validate payload contents — they just respond. The header struct `{command, destination, origin, numWords}` happens to match wire byte order, so header parsing works correctly without bswap. VMU commands (BLOCK_READ, BLOCK_WRITE, GET_MEDIA_INFO) validate a function code word in the payload — this comparison failed because the value was byte-reversed.
+
+**The fix:** Added `__builtin_bswap32()` to all function code and location word reads in `DreamcastVMU.cpp`. Raw BLOCK_WRITE data is deliberately NOT bswapped — it must stay in wire byte order so the round-trip preserves original bytes:
+```
+DC LE memory → wire (BE) → our flash (wire order) → TX DMA bswap → PIO MSBit-first → DC LE memory (same bytes)
+```
+
+**Reference comparison:** DreamPicoPort (the reference implementation in `maplepad_ref/`) handles this with `channel_config_set_bswap(&c, true)` on the RX DMA channel, automatically converting wire bytes to host order. Our software decoder doesn't have this luxury — bswap must be done manually at the application layer.
+
+**Format version tracking:** Added `VMU_FORMAT_VERSION` byte (currently 2) at system block offset 17. `needsFormat()` checks this value — if it doesn't match the current version, the VMU is re-formatted. This ensures layout constant changes (like save area start block) take effect on existing devices.
+
+### VMU (Virtual Memory Unit) Emulation
+
+The driver emulates a standard VMU at sub-peripheral address 0x01:
+- **256 blocks × 512 bytes = 128KB** stored in RP2040 flash at offset 0x001D8000
+- **Filesystem layout:** System block (255), FAT (254), file info directory (241-253), save area (blocks 0-199)
+- **Auto-formats** on first boot if flash area is blank or format version mismatches
+- **Block writes** arrive in 4 phases (128 bytes each) — accumulated in a write buffer, then committed to flash via `processFlashWrite()` in the main loop
+- **Flash safety:** `flash_range_erase` + `flash_range_program` disables interrupts for ~50-100ms. Core 1 is not yet launched during initial format (safe). During gameplay saves, this causes a brief controller dropout — acceptable tradeoff.
+
+### Implementation Status (Epic Phases)
+
+The Dreamcast driver was built in phases following the plan in `curried-swimming-kahn.md`:
+
+**Phase 1: Protocol Fixes (COMPLETE)**
+- SM restart after TX (the critical fix for disconnect cycling)
+- RX clock divider corrected (3.0 → 1.0, matching reference)
+- Bus line check before TX (prevents contention)
+- RX DMA ring buffer (prevents FIFO overflow)
+- TXSTALL-based TX completion detection
+
+**Phase 2: Architecture Alignment (PARTIAL)**
+- Display rate-limited to 10 FPS in DC mode ✓
+- GPIO conflict guard, DriverManager integration, unified loop — deferred (working without them)
+
+**Phase 3: Feature Completion (IN PROGRESS)**
+- VMU enabled with byte order fix ✓
+- VMU format version tracking ✓
+- Analog stick, triggers, all buttons working ✓
+- Rumble/vibration support — not yet implemented
+- L2/R2 analog trigger fix, analog rounding — not yet implemented
+
+**Phase 4: Core 1 Optimization (FUTURE)**
+- Move Maple Bus I/O to Core 1 for sub-100µs response times — deferred
+
+### Key Lessons from Dreamcast Development
+
+1. **PIO SMs must be fully restarted, not just re-enabled.** `pio_sm_set_enabled(true)` resumes from the frozen instruction — after TX, edge-watcher SMs can be in any state. Full restart (`pio_sm_restart` + `pio_sm_exec(jmp)`) eliminated the ~12% per-TX packet loss that caused 1-3 Hz disconnect cycling.
+
+2. **Wire byte order vs host byte order is the #1 gotcha.** Maple Bus sends MSBit-first per 32-bit word. A software decoder stores bytes in wire (BE) order. On LE hardware, `uint32_t` casts are byte-reversed. Header parsing can accidentally work (struct field order matches wire order) while payload validation fails silently.
+
+3. **The CP (consecutive polls) diagnostic was the key insight.** Tracking how many successful GET_CONDITION polls the DC completed before re-probing (DEVICE_REQUEST) pointed directly at per-TX-cycle failure probability, not latency.
+
+4. **DMA bswap on TX creates correct wire order from LE structs.** The TX DMA has `channel_config_set_bswap` enabled, converting LE values to BE wire order. Word 0 (bitPairsMinus1, a PIO counter not wire data) is pre-bswapped to cancel the DMA bswap. This is elegant but means raw block data from flash (stored in wire order) gets double-bswapped back to original — which is correct for the round-trip.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/drivers/dreamcast/maple.pio` | PIO assembly: TX + RX triple program |
+| `src/drivers/dreamcast/maple_bus.cpp` | Transport: init, sendPacket, pollReceive, decodeSample, CRC |
+| `headers/drivers/dreamcast/maple_bus.h` | MapleBus class, packet structs, protocol constants |
+| `src/drivers/dreamcast/DreamcastDriver.cpp` | Application: button mapping, command dispatch |
+| `headers/drivers/dreamcast/DreamcastDriver.h` | Driver class, debug counters |
+| `src/drivers/dreamcast/DreamcastVMU.cpp` | VMU: filesystem, block read/write, flash persistence |
+| `headers/drivers/dreamcast/DreamcastVMU.h` | VMU constants and class |
+| `maplepad_ref/` | DreamPicoPort reference implementation |
