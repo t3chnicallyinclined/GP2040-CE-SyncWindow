@@ -25,3 +25,6 @@ www/src_gen/enums.ts
 # External hardware reference
 Hardware/
 
+# Internal docs / agent context
+docs/
+
