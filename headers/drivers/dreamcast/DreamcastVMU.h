@@ -69,6 +69,10 @@ private:
     bool flashWritePending;
     uint16_t flashWriteBlockNum;
 
+    // Write phase tracking — validates all 4 phases target the same block
+    uint16_t currentWriteBlock;   // Block number being accumulated (0xFFFF = none)
+    uint8_t  writePhaseMask;      // Bitmask of received phases (0x0F = all 4)
+
     // Sector buffer for read-modify-write of 4KB flash sectors
     uint8_t sectorBuffer[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));
 

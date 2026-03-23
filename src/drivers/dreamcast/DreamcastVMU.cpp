@@ -7,7 +7,8 @@
 #define VMU_XIP_BASE  (XIP_BASE + VMU_FLASH_OFFSET)
 
 DreamcastVMU::DreamcastVMU()
-    : flashWritePending(false), flashWriteBlockNum(0) {
+    : flashWritePending(false), flashWriteBlockNum(0),
+      currentWriteBlock(0xFFFF), writePhaseMask(0) {
     memset(writeBuffer, 0, sizeof(writeBuffer));
     memset(sectorBuffer, 0, sizeof(sectorBuffer));
 }
@@ -382,7 +383,7 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
             uint8_t phase = (locWord >> 16) & 0xFF;
 
             if (blockNum >= VMU_NUM_BLOCKS || phase >= VMU_WRITES_PER_BLOCK) {
-                sendFileErrorResponse(0x00000010, port, bus);  // Out of range
+                sendFileErrorResponse(0x00000010, port, bus);
                 debugVmuTxCount++;
                 return true;
             }
@@ -395,9 +396,25 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
                 return true;
             }
 
+            // Validate block consistency across write phases
+            if (phase == 0) {
+                // Starting new block — reset tracking
+                currentWriteBlock = blockNum;
+                writePhaseMask = 0;
+                memset(writeBuffer, 0, sizeof(writeBuffer));
+            } else if (blockNum != currentWriteBlock) {
+                // Block mismatch — reject and reset
+                currentWriteBlock = 0xFFFF;
+                writePhaseMask = 0;
+                sendFileErrorResponse(0x00000010, port, bus);
+                debugVmuTxCount++;
+                return true;
+            }
+
             // Copy write data into the write buffer at the correct phase offset
             uint32_t byteOffset = phase * VMU_BYTES_PER_WRITE;
             memcpy(writeBuffer + byteOffset, &payload[2], VMU_BYTES_PER_WRITE);
+            writePhaseMask |= (1u << phase);
 
             sendAckResponse(port, bus);
             debugVmuTxCount++;
@@ -406,7 +423,7 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
         }
 
         case MAPLE_CMD_BLOCK_COMPLETE_WRITE: {
-            // GET_LAST_ERROR — commit the accumulated block write to flash
+            // Commit the accumulated block write to flash
             if (payloadWords < 2 || payload[0] != MAPLE_FUNC_MEMORY_CARD) {
                 sendFileErrorResponse(0x00000001, port, bus);
                 debugVmuTxCount++;
@@ -422,8 +439,19 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
                 return true;
             }
 
+            // Validate: all 4 phases received for this block
+            if (blockNum != currentWriteBlock || writePhaseMask != 0x0F) {
+                sendFileErrorResponse(0x00000010, port, bus);
+                debugVmuTxCount++;
+                currentWriteBlock = 0xFFFF;
+                writePhaseMask = 0;
+                return true;
+            }
+
             // Schedule the flash write (will be performed in processFlashWrite)
             scheduleBlockWrite(blockNum);
+            currentWriteBlock = 0xFFFF;
+            writePhaseMask = 0;
 
             sendAckResponse(port, bus);
             debugVmuTxCount++;

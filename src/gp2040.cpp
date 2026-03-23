@@ -404,14 +404,14 @@ void GP2040::run() {
 		} else {
 			debounceGpioGetAll();
 		}
-		gamepad->read();
 
 		// Force digital dpad for Dreamcast — DC has digital dpad only.
-		// Without this, Left Analog mode routes directions to lx/ly
-		// and state.dpad stays 0, making DC dpad buttons unresponsive.
+		// Must be set BEFORE read() so dpad routing is correct for this frame.
 		if (dcMode) {
 			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
 		}
+
+		gamepad->read();
 
 		checkRawState(prevState, gamepad->state);
 

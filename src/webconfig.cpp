@@ -669,6 +669,7 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.dreamcastPinB, doc, "dreamcastPinB");
     readDoc(gamepadOptions.dcSyncMode, doc, "dcSyncMode");
     readDoc(gamepadOptions.dcSyncWindow, doc, "dcSyncWindow");
+    readDoc(gamepadOptions.disableVMU, doc, "disableVMU");
     readDoc(gamepadOptions.inputModeB1, doc, "inputModeB1");
     readDoc(gamepadOptions.inputModeB2, doc, "inputModeB2");
     readDoc(gamepadOptions.inputModeB3, doc, "inputModeB3");
@@ -745,6 +746,7 @@ std::string getGamepadOptions()
     writeDoc(doc, "dreamcastPinB", gamepadOptions.dreamcastPinB);
     writeDoc(doc, "dcSyncMode", gamepadOptions.dcSyncMode);
     writeDoc(doc, "dcSyncWindow", gamepadOptions.dcSyncWindow);
+    writeDoc(doc, "disableVMU", gamepadOptions.disableVMU ? 1 : 0);
     writeDoc(doc, "inputModeB1", gamepadOptions.inputModeB1);
     writeDoc(doc, "inputModeB2", gamepadOptions.inputModeB2);
     writeDoc(doc, "inputModeB3", gamepadOptions.inputModeB3);

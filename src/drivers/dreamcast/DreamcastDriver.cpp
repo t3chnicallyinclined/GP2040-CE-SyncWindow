@@ -1,6 +1,7 @@
 #include "drivers/dreamcast/DreamcastDriver.h"
 #include "gamepad.h"
 #include "gamepad/GamepadState.h"
+#include "storagemanager.h"
 #include "pico/time.h"
 #include "hardware/gpio.h"
 
@@ -23,6 +24,9 @@ DreamcastDriver::DreamcastDriver()
 
 bool DreamcastDriver::init(uint pin_a, uint pin_b) {
     if (!bus.init(pin_a, pin_b)) return false;
+
+    // Load VMU config from storage
+    disableVMU = Storage::getInstance().getGamepadOptions().disableVMU;
 
     buildInfoPacket();
     buildControllerPacket();
@@ -124,11 +128,16 @@ void DreamcastDriver::sendControllerState(Gamepad* gamepad) {
     uint16_t dcButtons = mapButtonsToDC(gamepad->state.buttons, gamepad->state.dpad);
     uint8_t lt = gamepad->state.lt;
     uint8_t rt = gamepad->state.rt;
-    uint8_t jx = (uint8_t)(gamepad->state.lx >> 8);
-    uint8_t jy = (uint8_t)(gamepad->state.ly >> 8);
+    // Convert 16-bit unsigned (0-65535, mid=32767) to 8-bit unsigned (0-255, mid=128)
+    // Add 0x80 for rounding before shift, clamp to 255
+    uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+    uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+    uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+    uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
 
-    if (gamepad->state.buttons & GAMEPAD_MASK_L2) lt = 255;
-    if (gamepad->state.buttons & GAMEPAD_MASK_R2) rt = 255;
+    // Digital L2/R2 as fallback — only override if no analog trigger value
+    if (lt == 0 && (gamepad->state.buttons & GAMEPAD_MASK_L2)) lt = 255;
+    if (rt == 0 && (gamepad->state.buttons & GAMEPAD_MASK_R2)) rt = 255;
 
     // Set port bits in header. Origin includes MAPLE_SUB0_ADDR to announce VMU sub-peripheral
     // on EVERY response, not just device info. MaplePad does: senderAddr = mAddr | mAddrAugmenter.
@@ -336,6 +345,15 @@ void DreamcastDriver::process(Gamepad* gamepad) {
             case MAPLE_CMD_SHUTDOWN_DEVICE:
                 // DC sends RESET to recover from errors, SHUTDOWN before power-off.
                 // Must ACK — if we don't respond, DC thinks we crashed and disconnects.
+                sendACKResponse();
+                waitTxFlushRx();
+                debugTxCount++;
+                break;
+
+            case MAPLE_CMD_SET_CONDITION:
+                // Rumble/vibration — ACK to keep DC happy even though we don't
+                // drive haptic hardware yet. Without this, games that use rumble
+                // get UNKNOWN_COMMAND errors every frame.
                 sendACKResponse();
                 waitTxFlushRx();
                 debugTxCount++;

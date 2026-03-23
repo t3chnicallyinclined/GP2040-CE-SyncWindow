@@ -40,8 +40,8 @@ public:
     uint32_t debugConsecutivePolls = 0;
     uint32_t debugMaxConsecutivePolls = 0;
 
-    // VMU disable flag — set true to test without VMU sub-peripheral
-    bool disableVMU = true;  // DEFAULT TRUE for diagnostic build
+    // VMU disable flag — loaded from config in init()
+    bool disableVMU = false;
 
     // VMU sub-peripheral (public for debug display access)
     DreamcastVMU vmu;
