@@ -46,9 +46,6 @@ public:
     // VMU sub-peripheral (public for debug display access)
     DreamcastVMU vmu;
 
-    // Static instance pointer for display access
-    static DreamcastDriver* instance;
-
 private:
     MapleBus bus;
 

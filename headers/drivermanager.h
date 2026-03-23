@@ -5,6 +5,7 @@
 #include "gpdriver.h"
 
 class GPDriver;
+class DreamcastDriver;
 
 class DriverManager {
 public:
@@ -15,12 +16,14 @@ public:
         return instance;
     }
     GPDriver * getDriver() { return driver; }
+    DreamcastDriver * getDCDriver() { return dcDriver; }
     void setup(InputMode);
     InputMode getInputMode(){ return inputMode; }
     bool isConfigMode(){ return (inputMode == INPUT_MODE_CONFIG); }
 private:
     DriverManager() {}
     GPDriver * driver;
+    DreamcastDriver * dcDriver = nullptr;
     InputMode inputMode;
 };
 

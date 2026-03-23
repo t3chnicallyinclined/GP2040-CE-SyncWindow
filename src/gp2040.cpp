@@ -196,14 +196,6 @@ void GP2040::setup() {
 	// Always register the mode with DriverManager (for display, LEDs, etc.)
 	DriverManager::getInstance().setup(inputMode);
 
-	// Dreamcast mode: bypass USB, use Maple Bus instead
-	if (inputMode == INPUT_MODE_DREAMCAST) {
-		dreamcastMode = true;
-		GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
-		dreamcastDriver = new DreamcastDriver();
-		dreamcastDriver->init(opts.dreamcastPinA, opts.dreamcastPinB);
-	}
-
 	// save to match user expectations on choosing mode at boot, and this is
 	// before USB host will be used so we can force it to ignore the check
 	if (inputMode != INPUT_MODE_CONFIG && inputMode != gamepad->getOptions().inputMode) {
@@ -222,8 +214,20 @@ void GP2040::setup() {
 void GP2040::initializeStandardGpio() {
 	GpioMappingInfo* pinMappings = Storage::getInstance().getProfilePinMappings();
 	buttonGpios = 0;
+
+	// Reserve Dreamcast Maple Bus pins so they aren't configured as
+	// button inputs when DC mode is active (PIO owns them).
+	// Uses stored inputMode since this runs before DriverManager::setup().
+	// Boot action override to DC mode will re-init GPIO via getReinitGamepad().
+	uint32_t reservedPins = 0;
+	const GamepadOptions& gpOpts = Storage::getInstance().getGamepadOptions();
+	if (gpOpts.inputMode == INPUT_MODE_DREAMCAST) {
+		reservedPins |= (1u << gpOpts.dreamcastPinA) | (1u << gpOpts.dreamcastPinB);
+	}
+
 	for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++)
 	{
+		if (reservedPins & (1u << pin)) continue;
 		// (NONE=-10, RESERVED=-5, ASSIGNED_TO_ADDON=0, everything else is ours)
 		if (pinMappings[pin].action > 0)
 		{
@@ -373,72 +377,25 @@ void GP2040::run() {
 	Gamepad * processedGamepad = Storage::getInstance().GetProcessedGamepad();
 	GamepadState prevState;
 
-	if (dreamcastMode) {
-		// ==========================================
-		// Dreamcast Maple Bus main loop
-		// NO USB init, NO TinyUSB, NO USB Host
-		// Same input pipeline, Maple Bus output
-		// ==========================================
-		while (1) {
-			this->getReinitGamepad(gamepad);
-			memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
+	// Determine output mode — Dreamcast uses Maple Bus (no USB), all others use USB
+	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
+	bool dcMode = (dcDriver != nullptr);
+	bool configMode = false;
+	GPDriver * inputDriver = nullptr;
 
-			// Input processing: NOBD sync window OR stock debounce
-			if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
-				syncGpioGetAll();
-			} else {
-				debounceGpioGetAll();
-			}
-			gamepad->read();
-
-			// Force digital dpad for Dreamcast — DC controller has digital dpad only.
-			// Without this, Left Analog dpad mode routes directions to lx/ly
-			// and state.dpad stays 0, making DC dpad buttons unresponsive.
-			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
-
-			checkRawState(prevState, gamepad->state);
-
-			// Pre-Process add-ons for MPGS
-			addons.PreprocessAddons();
-
-			gamepad->hotkey();
-			rebootHotkeys.process(gamepad, false);
-
-			gamepad->process();
-
-			// (Post) Process for add-ons
-			addons.ProcessAddons();
-
-			checkProcessedState(processedGamepad->state, gamepad->state);
-			memcpy(&processedGamepad->state, &gamepad->state, sizeof(GamepadState));
-
-			// Process Dreamcast Maple Bus (instead of USB driver)
-			if (dreamcastDriver) dreamcastDriver->process(gamepad);
-
-			// Check if we have a pending save
-			checkSaveRebootState();
+	if (!dcMode) {
+		// USB modes: initialize TinyUSB, USB Host, and RNDIS for config
+		configMode = DriverManager::getInstance().isConfigMode();
+		inputDriver = DriverManager::getInstance().getDriver();
+		tud_init(TUD_OPT_RHPORT);
+		USBHostManager::getInstance().start();
+		if (configMode) {
+			rndis_init();
 		}
 	}
 
-	// ==========================================
-	// Standard USB main loop (unchanged)
-	// ==========================================
-	bool configMode = DriverManager::getInstance().isConfigMode();
-	GPDriver * inputDriver = DriverManager::getInstance().getDriver();
-
-	// Start the TinyUSB Device functionality
-	tud_init(TUD_OPT_RHPORT);
-
-	// Initialize our USB manager
-	USBHostManager::getInstance().start();
-
-	if (configMode == true ) {
-		rndis_init();
-	}
-
-	while (1) { // LOOP
+	while (1) {
 		this->getReinitGamepad(gamepad);
-
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
 		// Input processing: NOBD sync window OR stock debounce (mutually exclusive)
@@ -447,16 +404,24 @@ void GP2040::run() {
 		} else {
 			debounceGpioGetAll();
 		}
-		// Read Gamepad
 		gamepad->read();
+
+		// Force digital dpad for Dreamcast — DC has digital dpad only.
+		// Without this, Left Analog mode routes directions to lx/ly
+		// and state.dpad stays 0, making DC dpad buttons unresponsive.
+		if (dcMode) {
+			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
+		}
 
 		checkRawState(prevState, gamepad->state);
 
-		// Process USB Host on Core0
-		USBHostManager::getInstance().process();
+		// USB Host processing (not used in Dreamcast mode)
+		if (!dcMode) {
+			USBHostManager::getInstance().process();
+		}
 
 		// Config Loop (Web-Config skips Core0 add-ons)
-		if (configMode == true) {
+		if (configMode) {
 			inputDriver->process(gamepad);
 			rebootHotkeys.process(gamepad, configMode);
 			checkSaveRebootState();
@@ -466,10 +431,10 @@ void GP2040::run() {
 		// Pre-Process add-ons for MPGS
 		addons.PreprocessAddons();
 
-		gamepad->hotkey(); 	// check for MPGS hotkeys
-		rebootHotkeys.process(gamepad, configMode);
+		gamepad->hotkey();
+		rebootHotkeys.process(gamepad, false);
 
-		gamepad->process(); // process through MPGS
+		gamepad->process();
 
 		// (Post) Process for add-ons
 		addons.ProcessAddons();
@@ -479,16 +444,15 @@ void GP2040::run() {
 		// Copy Processed Gamepad for Core1 (race condition otherwise)
 		memcpy(&processedGamepad->state, &gamepad->state, sizeof(GamepadState));
 
-		// Process Input Driver
-		bool processed = inputDriver->process(gamepad);
+		// Output dispatch: Dreamcast Maple Bus or USB driver
+		if (dcMode) {
+			dcDriver->process(gamepad);
+		} else {
+			bool processed = inputDriver->process(gamepad);
+			tud_task();
+			addons.PostprocessAddons(processed);
+		}
 
-		// TinyUSB Task update
-		tud_task();
-
-		// Post-Process Add-ons with USB Report Processed Sent
-		addons.PostprocessAddons(processed);
-
-		// Check if we have a pending save
 		checkSaveRebootState();
 	}
 }

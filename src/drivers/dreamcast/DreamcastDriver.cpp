@@ -17,11 +17,8 @@
 #define DC_BTN_Y      0x0200
 #define DC_BTN_X      0x0400
 
-DreamcastDriver* DreamcastDriver::instance = nullptr;
-
 DreamcastDriver::DreamcastDriver()
     : connected(false), lastPort(0), lastProcessUs(0) {
-    instance = this;
 }
 
 bool DreamcastDriver::init(uint pin_a, uint pin_b) {

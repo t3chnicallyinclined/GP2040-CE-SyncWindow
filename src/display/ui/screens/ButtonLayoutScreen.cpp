@@ -208,13 +208,15 @@ void ButtonLayoutScreen::generateHeader() {
                     statusBar += "INPUT";
                 break;
             case INPUT_MODE_KEYBOARD: statusBar += "HID-KB"; break;
-            case INPUT_MODE_DREAMCAST:
-                if (DreamcastDriver::instance) {
-                    statusBar += "DC Rx:" + std::to_string(DreamcastDriver::instance->debugRxCount);
+            case INPUT_MODE_DREAMCAST: {
+                DreamcastDriver* dc = DriverManager::getInstance().getDCDriver();
+                if (dc) {
+                    statusBar += "DC Rx:" + std::to_string(dc->debugRxCount);
                 } else {
                     statusBar += "DC-NOINIT";
                 }
                 break;
+            }
             case INPUT_MODE_CONFIG: statusBar += "CONFIG"; break;
         }
     }
@@ -272,8 +274,9 @@ void ButtonLayoutScreen::generateHeader() {
 
 void ButtonLayoutScreen::drawScreen() {
     // Dreamcast debug: take over entire display
-    if (inputMode == INPUT_MODE_DREAMCAST && DreamcastDriver::instance) {
-        auto* dc = DreamcastDriver::instance;
+    DreamcastDriver* dcDbg = DriverManager::getInstance().getDCDriver();
+    if (inputMode == INPUT_MODE_DREAMCAST && dcDbg) {
+        auto* dc = dcDbg;
 
         // Line 0: Rx/Tx counts and XOR failures
         std::string line0 = "Rx:" + std::to_string(dc->debugRxCount);

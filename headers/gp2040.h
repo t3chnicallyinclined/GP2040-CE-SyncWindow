@@ -16,8 +16,6 @@
 
 #include "pico/types.h"
 
-class DreamcastDriver;
-
 class GP2040 {
 public:
     GP2040(){}
@@ -95,9 +93,6 @@ private:
 
     System::BootMode rebootMode = System::BootMode::DEFAULT;
 
-    // Dreamcast Maple Bus mode
-    bool dreamcastMode = false;
-    DreamcastDriver* dreamcastDriver = nullptr;
 };
 
 #endif

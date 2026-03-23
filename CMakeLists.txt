@@ -206,6 +206,7 @@ src/drivers/xinput/XInputAuthUSBListener.cpp
 src/drivers/xinput/XInputDriver.cpp
 src/drivers/dreamcast/maple_bus.cpp
 src/drivers/dreamcast/DreamcastDriver.cpp
+src/drivers/dreamcast/DreamcastVMU.cpp
 src/interfaces/i2c/i2cdevicebase.cpp
 src/interfaces/i2c/pcf8575/pcf8575.cpp
 src/interfaces/i2c/ssd1306/obd_ssd1306.cpp

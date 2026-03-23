@@ -1,4 +1,6 @@
 #include "drivermanager.h"
+#include "storagemanager.h"
+#include "drivers/dreamcast/DreamcastDriver.h"
 
 #include "drivers/net/NetDriver.h"
 #include "drivers/astro/AstroDriver.h"
@@ -72,10 +74,14 @@ void DriverManager::setup(InputMode mode) {
         case INPUT_MODE_SWITCH_PRO:
             driver = new SwitchProDriver();
             break;
-        case INPUT_MODE_DREAMCAST:
-            driver = nullptr; // Dreamcast uses Maple Bus, not USB — handled separately
+        case INPUT_MODE_DREAMCAST: {
+            driver = nullptr; // Dreamcast uses Maple Bus, not USB
+            GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
+            dcDriver = new DreamcastDriver();
+            dcDriver->init(opts.dreamcastPinA, opts.dreamcastPinB);
             inputMode = mode;
             return;
+        }
         default:
             return;
     }

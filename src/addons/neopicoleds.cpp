@@ -11,6 +11,7 @@
 #include "playerleds.h"
 #include "gp2040.h"
 #include "addons/neopicoleds.h"
+#include "drivermanager.h"
 #include "addons/pleds.h"
 #include "usbdriver.h"
 #include "enums.h"
@@ -240,6 +241,9 @@ PLEDAnimationState getSwitchProAnimationNEOPICO(uint16_t ledState)
 }
 
 bool NeoPicoLEDAddon::available() {
+    // NeoPixels use PIO0 SM0, which conflicts with Maple TX in Dreamcast mode
+    if (DriverManager::getInstance().getInputMode() == INPUT_MODE_DREAMCAST)
+        return false;
     const LEDOptions& ledOptions = Storage::getInstance().getLedOptions();
     return isValidPin(ledOptions.dataPin);
 }
