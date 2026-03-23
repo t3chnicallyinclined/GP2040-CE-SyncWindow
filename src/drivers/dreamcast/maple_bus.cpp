@@ -1,13 +1,15 @@
 #include "drivers/dreamcast/maple_bus.h"
 #include "maple.pio.h"
 #include "hardware/gpio.h"
+#include "hardware/clocks.h"
 #include "pico/time.h"
 
 MapleBus::MapleBus()
-    : txPio(pio0), rxPio(pio1), txSm(0), txDmaChannel(0), rxDmaChannel(0),
+    : txPio(pio0), rxPio(pio1), txSm(0), txSmOffset(0), txDmaChannel(0), rxDmaChannel(0),
       pinA(0), pinB(0), initialized(false), rxDmaReadPos(0),
       rxState(MAPLE_RX_IDLE), syncCount(0), bitCount(0),
-      currentByte(0), xorCheck(0), writePos(0), packetComplete(false), fifoReadCount(0) {
+      currentByte(0), xorCheck(0), writePos(0), packetComplete(false), fifoReadCount(0),
+      lastSampleTimeUs(0) {
     memset(rxDecodedBuf, 0, sizeof(rxDecodedBuf));
     memset(rxDmaBuf, 0, sizeof(rxDmaBuf));
 }
@@ -24,7 +26,13 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     txPio = pio0;
     txSm = pio_claim_unused_sm(txPio, true);
     uint offset = pio_add_program(txPio, &maple_tx_program);
-    maple_tx_program_init(txPio, txSm, offset, pinA, pinB, 3.0f);
+    txSmOffset = offset;
+    // TX clkdiv for 480ns/bit (Maple Bus spec, ~2 Mbps).
+    // maple_tx data loop = 27 PIO cycles per bit.
+    // clkdiv = target_ns_per_bit * sys_freq_MHz / (cycles_per_bit * 1000)
+    uint32_t sysHz = clock_get_hz(clk_sys);
+    float txClkDiv = (480.0f * (sysHz / 1e6f)) / (27.0f * 1000.0f);
+    maple_tx_program_init(txPio, txSm, offset, pinA, pinB, txClkDiv);
 
     // TX DMA channel
     txDmaChannel = dma_claim_unused_channel(true);
@@ -33,6 +41,11 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     channel_config_set_write_increment(&txConfig, false);
     channel_config_set_transfer_data_size(&txConfig, DMA_SIZE_32);
     channel_config_set_dreq(&txConfig, pio_get_dreq(txPio, txSm, true));
+    // DMA byte swap: reverses bytes in each 32-bit word during transfer.
+    // This converts LE struct layout to BE wire order for PIO MSB-first TX.
+    // Replaces the CPU bswap32 loop in sendPacket() and correctly handles
+    // mixed-size fields (e.g., two uint16_t in one word).
+    channel_config_set_bswap(&txConfig, true);
     dma_channel_configure(txDmaChannel, &txConfig,
                           &txPio->txf[txSm], // Destination: PIO TX FIFO
                           NULL,               // Source: set at send time
@@ -63,6 +76,7 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     channel_config_set_transfer_data_size(&rxDmaConfig, DMA_SIZE_32);
     channel_config_set_dreq(&rxDmaConfig, pio_get_dreq(rxPio, 0, false));  // DREQ from SM0 RX
     channel_config_set_ring(&rxDmaConfig, true, MAPLE_RX_DMA_RING_BITS);   // Write address wraps
+    channel_config_set_chain_to(&rxDmaConfig, rxDmaChannel);              // Self-chain for infinite operation
     dma_channel_configure(rxDmaChannel, &rxDmaConfig,
                           rxDmaBuf,          // Dest: ring buffer in RAM
                           &rxPio->rxf[0],    // Source: PIO1 SM0 RX FIFO
@@ -82,19 +96,17 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
 }
 
 void MapleBus::sendPacket(const uint32_t* words, uint numWords) {
-    // Byte-swap each DATA word for PIO MSB-first transmission.
-    // Structs use wire byte order (offset 0 = first byte on wire).
-    // PIO sends bit 31 (MSB) first. On LE ARM, MSB = offset 3.
-    // bswap32 reverses bytes so offset 0 → MSB → first on wire.
+    // DMA byte swap is enabled on the TX channel (channel_config_set_bswap),
+    // so every 32-bit word gets its bytes reversed during DMA transfer.
+    // This converts LE struct layout to BE wire order for PIO MSB-first TX.
     //
-    // Word 0 (bitPairsMinus1) is NOT swapped — it's a PIO loop counter value,
-    // consumed by `out x,32`, not transmitted as wire data.
+    // Word 0 (bitPairsMinus1) is a PIO loop counter consumed by `out x,32`,
+    // NOT wire data. DMA bswap would reverse it incorrectly, so we pre-reverse
+    // it here so the double-reversal cancels out and PIO gets the correct value.
     static uint32_t txBuf[MAPLE_TX_BUF_SIZE];
     uint count = (numWords <= MAPLE_TX_BUF_SIZE) ? numWords : MAPLE_TX_BUF_SIZE;
-    txBuf[0] = words[0]; // bitPairsMinus1: value for PIO, not byte data
-    for (uint i = 1; i < count; i++) {
-        txBuf[i] = __builtin_bswap32(words[i]);
-    }
+    txBuf[0] = __builtin_bswap32(words[0]); // Pre-reverse: DMA bswap will undo this
+    memcpy(&txBuf[1], &words[1], (count - 1) * sizeof(uint32_t));
 
     // Disable RX state machines before transmitting to prevent echo capture.
     // The RX PIO shares the same bus pins and would decode our own TX as
@@ -103,15 +115,28 @@ void MapleBus::sendPacket(const uint32_t* words, uint numWords) {
     pio_sm_set_enabled(rxPio, 1, false);
     pio_sm_set_enabled(rxPio, 2, false);
 
-    // Bus line check: verify both pins are HIGH (idle) before driving.
+    // Bus line check: verify both pins are HIGH (idle) for 10µs before driving.
     // If the DC hasn't finished its end-of-packet tail, we'd cause bus contention.
-    // Reference: 10µs open-line verification before every TX.
+    // Outer 1ms timeout prevents infinite loop if bus is stuck low (hardware fault).
     {
         uint64_t startUs = time_us_64();
-        while ((time_us_64() - startUs) < 10) {
+        uint64_t outerDeadline = startUs + 1000; // 1ms max wait
+        bool busIdle = false;
+        while (time_us_64() < outerDeadline) {
             if (!gpio_get(pinA) || !gpio_get(pinB)) {
-                startUs = time_us_64();  // Reset timer if bus not idle
+                startUs = time_us_64();  // Reset 10µs window
+            } else if ((time_us_64() - startUs) >= 10) {
+                busIdle = true;
+                break;
             }
+        }
+        if (!busIdle) {
+            debugBusStuckCount++;
+            // Re-enable RX SMs since we're aborting TX
+            pio_sm_set_enabled(rxPio, 1, true);
+            pio_sm_set_enabled(rxPio, 2, true);
+            pio_sm_set_enabled(rxPio, 0, true);
+            return;
         }
     }
 
@@ -126,19 +151,38 @@ bool MapleBus::isTransmitting() {
 }
 
 void MapleBus::flushRx() {
-    // Wait for TX DMA to finish feeding the PIO TX FIFO
-    while (dma_channel_is_busy(txDmaChannel)) { tight_loop_contents(); }
+    // Wait for TX DMA to finish feeding the PIO TX FIFO (5ms timeout).
+    // Longest packet: VMU block read = 130 words = 520 bytes = ~2ms at 480ns/bit.
+    uint64_t deadline = time_us_64() + 5000;
+    while (dma_channel_is_busy(txDmaChannel)) {
+        if (time_us_64() >= deadline) {
+            dma_channel_abort(txDmaChannel);
+            debugTxTimeout++;
+            break;
+        }
+        tight_loop_contents();
+    }
 
     // Clear TXSTALL sticky bit, then wait for PIO to finish ALL data + tail sequence.
     // TXSTALL gets set when the TX SM stalls at `pull` with empty FIFO — meaning
     // all bit pairs have been clocked out AND the tail sequence is complete.
-    // This is precise: no timing guesswork, no risk of too-short or too-long waits.
     txPio->fdebug = (1u << (PIO_FDEBUG_TXSTALL_LSB + txSm));
+    deadline = time_us_64() + 5000;
     while (!(txPio->fdebug & (1u << (PIO_FDEBUG_TXSTALL_LSB + txSm)))) {
+        if (time_us_64() >= deadline) {
+            // TX SM is stuck — force-restart it to recover
+            pio_sm_set_enabled(txPio, txSm, false);
+            pio_sm_clear_fifos(txPio, txSm);
+            pio_sm_restart(txPio, txSm);
+            pio_sm_exec(txPio, txSm, pio_encode_jmp(txSmOffset));
+            pio_sm_set_enabled(txPio, txSm, true);
+            debugTxTimeout++;
+            break;
+        }
         tight_loop_contents();
     }
 
-    // TX is fully complete. Bus is idle (both pins HIGH via pull-ups).
+    // TX is fully complete (or recovered from timeout).
     // RX SMs have been disabled since sendPacket() — no echo was captured.
 
     // Reset decoder state machine
@@ -340,6 +384,9 @@ bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
                         - (uintptr_t)rxDmaBuf) / sizeof(uint32_t);
     dmaWriteIdx %= MAPLE_RX_DMA_BUF_WORDS;
 
+    bool hadData = (rxDmaReadPos != dmaWriteIdx);
+    if (hadData) lastSampleTimeUs = time_us_64();
+
     while (rxDmaReadPos != dmaWriteIdx) {
         uint32_t fifoWord = rxDmaBuf[rxDmaReadPos];
         rxDmaReadPos = (rxDmaReadPos + 1) % MAPLE_RX_DMA_BUF_WORDS;
@@ -377,6 +424,18 @@ bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
         xorCheck = 0;
         debugPollTrue++;
         return true;
+    }
+
+    // Stale-data timeout: if decoder is mid-packet but no new samples arrived
+    // for >2ms, the packet was truncated (noise, partial TX). Reset to IDLE.
+    if (!hadData && rxState != MAPLE_RX_IDLE && lastSampleTimeUs > 0) {
+        if ((time_us_64() - lastSampleTimeUs) > 2000) {
+            rxState = MAPLE_RX_IDLE;
+            writePos = 0;
+            bitCount = 0;
+            currentByte = 0;
+            xorCheck = 0;
+        }
     }
 
     *outPacket = nullptr;

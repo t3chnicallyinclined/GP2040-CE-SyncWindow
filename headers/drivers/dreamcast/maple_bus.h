@@ -210,11 +210,14 @@ public:
     uint8_t  debugLastBitCount = 0;  // bitCount at last end-of-packet attempt
     uint32_t debugPollTrue = 0;      // Times pollReceive returned true
     uint32_t debugFlushCount = 0;    // FIFO words drained after last TX (echo proof)
+    uint32_t debugTxTimeout = 0;     // Times flushRx() timed out waiting for TX completion
+    uint32_t debugBusStuckCount = 0; // Times sendPacket() aborted due to bus stuck low
 
 private:
     PIO txPio;
     PIO rxPio;
     uint txSm;
+    uint txSmOffset;  // TX program offset (needed for SM recovery on timeout)
     uint txDmaChannel;
     uint rxDmaChannel;
     uint pinA;
@@ -240,6 +243,7 @@ private:
     uint8_t rxDecodedBuf[MAPLE_RX_BUF_SIZE] __attribute__((aligned(4)));
     bool packetComplete;
     uint32_t fifoReadCount;
+    uint64_t lastSampleTimeUs;  // Timestamp of last DMA data processed (for stale-data timeout)
 
     // Process one 2-bit pin sample through the decoder state machine
     void decodeSample(uint8_t pins);
