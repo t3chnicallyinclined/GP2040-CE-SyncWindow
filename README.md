@@ -77,12 +77,12 @@ GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks direct
 | DC Cable | Board Connection | Notes |
 |----------|----------------|-------|
 | Red (VCC) | VCC | Board is powered directly by the DC's 5V |
-| Green (SDCKA) | GPIO 28 | Maple Bus Data A |
-| Blue (SDCKB) | GPIO 29 | Maple Bus Data B |
+| Green (SDCKA) | GPIO 23 | Maple Bus Data A |
+| Blue (SDCKB) | GPIO 24 | Maple Bus Data B |
 | White (Sense) | GND | Tie directly to ground — tells DC a device is present |
 | Black (GND) | GND | Common ground |
 
-> GPIO 28/29 are the defaults. These can be changed in the web UI.
+> GPIO 23/24 are the defaults. These can be changed in the web UI.
 
 ### Wiring Photos
 
