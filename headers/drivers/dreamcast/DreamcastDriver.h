@@ -4,6 +4,14 @@
 #include "drivers/dreamcast/maple_bus.h"
 #include "drivers/dreamcast/DreamcastVMU.h"
 
+// DC Sync Modes — how inputs are timed relative to the Dreamcast's 60Hz polling.
+// Currently always DC_SYNC_OFF (raw passthrough, matches real DC controller behavior).
+// NOBD sync window handles press grouping at the GPIO level if needed.
+// Accumulate mode is preserved for potential future use cases (e.g., USB-host-based
+// input sources with lower update rates than direct GPIO).
+#define DC_SYNC_OFF        0  // Raw snapshot at poll time (active)
+#define DC_SYNC_ACCUMULATE 1  // Latch all presses between polls (reserved for future use)
+
 class Gamepad;
 
 class DreamcastDriver {
@@ -32,7 +40,7 @@ public:
     uint32_t debugCmd9Count = 0;  // GET_CONDITION
     uint32_t debugCmdOtherCount = 0; // Any other command
 
-    // Loop timing diagnostic (max µs between process() calls, resets every ~1s)
+    // Loop timing diagnostic (max us between process() calls, resets every ~1s)
     uint32_t debugLoopMaxUs = 0;
     uint32_t debugLoopLastResetUs = 0;
 
@@ -40,8 +48,16 @@ public:
     uint32_t debugConsecutivePolls = 0;
     uint32_t debugMaxConsecutivePolls = 0;
 
+    // REQUEST_RESEND counter — how many times we asked DC to retransmit
+    uint32_t debugResendCount = 0;
+
     // VMU disable flag — loaded from config in init()
     bool disableVMU = false;
+
+    // VMU ready gate — don't process VMU commands until we've confirmed
+    // the RX decoder is aligned via a successful controller DEVICE_REQUEST.
+    // Prevents byte-shifted payloads from hot-plug mid-frame captures.
+    bool vmuReady = false;
 
     // VMU sub-peripheral (public for debug display access)
     DreamcastVMU vmu;
@@ -49,23 +65,37 @@ public:
 private:
     MapleBus bus;
 
-    MapleInfoPacket       infoPacket;
-    MapleControllerPacket controllerPacket;
-    MapleACKPacket        ackPacket;
+    // Pre-built packet buffers (wire/network byte order, uint32_t arrays)
+    // Layout: [0]=bitPairsMinus1, [1]=header, [2..N-2]=payload, [N-1]=CRC
+    uint32_t infoPacketBuf[31];       // bitpairs + header + 28 device info words + CRC
+    uint32_t controllerPacketBuf[6];  // bitpairs + header + funcCode + 2 condition words + CRC
+    uint32_t ackPacketBuf[3];         // bitpairs + header + CRC
+    uint32_t resendPacketBuf[3];      // bitpairs + header + CRC
 
     bool connected;
     uint8_t lastPort;
 
     uint64_t lastProcessUs;  // Timestamp of last process() call (for loop timing)
 
+    // Accumulate mode state — reserved for future use.
+    // Currently disabled (dcSyncMode always DC_SYNC_OFF). See comment at top of file.
+    uint32_t dcSyncMode = DC_SYNC_OFF;
+    uint32_t accumButtons = 0;
+    uint8_t  accumDpad = 0;
+    uint8_t  accumLt = 0;
+    uint8_t  accumRt = 0;
+
     void buildInfoPacket();
     void buildControllerPacket();
     void buildACKPacket();
+    void buildResendPacket();
 
+    void accumulate(Gamepad* gamepad);
     void sendControllerState(Gamepad* gamepad);
     void sendInfoResponse();
     void sendExtInfoResponse();
     void sendACKResponse();
+    void sendResendRequest();
     void sendUnknownCommandResponse();
     void waitTxFlushRx();
     uint16_t mapButtonsToDC(uint32_t gpButtons, uint8_t dpad);

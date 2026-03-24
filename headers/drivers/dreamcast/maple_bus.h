@@ -1,5 +1,10 @@
 #pragma once
 
+// Maple Bus transport layer for RP2040 Dreamcast controller/VMU emulation.
+// Architecture based on MaplePad by mackieks (github.com/mackieks/MaplePad)
+// and DreamPicoPort. All packet data is stored in WIRE (network) byte order —
+// NO DMA bswap. Field extraction uses explicit __builtin_bswap32().
+
 #include <stdint.h>
 #include <string.h>
 #include "hardware/pio.h"
@@ -36,7 +41,7 @@ enum MapleCommand {
     MAPLE_CMD_NO_RESPONSE           = -1,
 };
 
-// Maple Bus function codes
+// Maple Bus function codes (logical/host values)
 enum MapleFunction {
     MAPLE_FUNC_CONTROLLER  = 1,
     MAPLE_FUNC_MEMORY_CARD = 2,
@@ -45,134 +50,42 @@ enum MapleFunction {
     MAPLE_FUNC_VIBRATION   = 256,
 };
 
-// Packet header (4 bytes) — field order matches wire byte order.
-// Maple Bus sends MSB-first. The header word on wire is:
-//   byte 0 (first): numWords   (bits 31-24 of the 32-bit word)
-//   byte 1:         sender     (bits 23-16) — "origin" in our naming
-//   byte 2:         recipient  (bits 15-8)  — "destination" in our naming
-//   byte 3 (last):  command    (bits 7-0)
-// RX decoder puts wire bytes into rxDecodedBuf[] sequentially,
-// so this struct maps correctly when cast from the decoded buffer.
-// TX uses bswap32 in sendPacket to convert this byte order to
-// the correct bit positions for PIO MSB-first output.
-typedef struct __attribute__((packed)) {
-    uint8_t  numWords;
-    uint8_t  origin;
-    uint8_t  destination;
-    int8_t   command;
-} MaplePacketHeader;
+// ============================================================
+// Wire-order header accessors (NO DMA bswap architecture)
+//
+// PIO maple_rx shifts bits LEFT, autopush at 32 bits.
+// Maple Bus sends LSByte first. First byte received → bits [31:24].
+// Without DMA bswap, RAM uint32_t = PIO FIFO value:
+//   bits [31:24] = numWords  (first byte on wire)
+//   bits [23:16] = origin    (sender address)
+//   bits [15:8]  = destination (recipient address)
+//   bits [7:0]   = command   (last byte on wire)
+// ============================================================
 
-// Device info payload
-typedef struct __attribute__((packed)) {
-    uint32_t func;           // Big endian
-    uint32_t funcData[3];    // Big endian
-    int8_t   areaCode;
-    uint8_t  connectorDirection;
-    char     productName[30];
-    char     productLicense[60];
-    uint16_t standbyPower;
-    uint16_t maxPower;
-} MapleDeviceInfo;
+static inline uint8_t maple_hdr_numWords(uint32_t w) { return (w >> 24) & 0xFF; }
+static inline uint8_t maple_hdr_origin(uint32_t w)   { return (w >> 16) & 0xFF; }
+static inline uint8_t maple_hdr_dest(uint32_t w)     { return (w >> 8) & 0xFF; }
+static inline int8_t  maple_hdr_command(uint32_t w)   { return (int8_t)(w & 0xFF); }
 
-// Controller condition payload
-// Byte order matches DreamPicoPort's controller_condition_t (HOST byte order).
-// sendPacket bswap32 converts to NETWORK order for PIO MSB-first transmission.
-// On wire (after bswap + PIO): offset 0 goes first, matching Maple Bus LSByte-first.
-typedef struct __attribute__((packed)) {
-    uint32_t condition;      // Function code (native value — sendPacket bswap handles wire order)
-    uint8_t  leftTrigger;    // 0=released, 255=fully pressed
-    uint8_t  rightTrigger;   // 0=released, 255=fully pressed
-    uint8_t  buttonsHi;      // Buttons high byte (Z,Y,X,D,UpB,DownB,LeftB,RightB) (inverted: 0=pressed)
-    uint8_t  buttonsLo;      // Buttons low byte (C,B,A,Start,Up,Down,Left,Right) (inverted: 0=pressed)
-    uint8_t  joyY2;          // Right analog Y (0=up, 128=center, 255=down)
-    uint8_t  joyX2;          // Right analog X (0=left, 128=center, 255=right)
-    uint8_t  joyY;           // Left analog Y (0=up, 128=center, 255=down)
-    uint8_t  joyX;           // Left analog X (0=left, 128=center, 255=right)
-} MapleControllerCondition;
+static inline uint32_t maple_make_header(uint8_t nw, uint8_t orig, uint8_t dest, int8_t cmd) {
+    return ((uint32_t)nw << 24) | ((uint32_t)orig << 16)
+         | ((uint32_t)(uint8_t)dest << 8) | (uint8_t)cmd;
+}
 
-// VMU memory info payload (7 words: func code + 6 media info words)
-typedef struct __attribute__((packed)) {
-    uint32_t funcCode;
-    uint32_t mediaInfo[6];
-} MapleMemoryInfo;
+// Convert a logical (host-order) 32-bit value to wire order for TX payload
+static inline uint32_t maple_host_to_wire(uint32_t v) { return __builtin_bswap32(v); }
 
-// VMU block read payload (func code + location + 128 data words = 130 words)
-typedef struct __attribute__((packed)) {
-    uint32_t funcCode;
-    uint32_t location;
-    uint32_t data[128];  // 512 bytes = one VMU block
-} MapleBlockReadData;
-
-// VMU file error payload (1 word: error code)
-typedef struct __attribute__((packed)) {
-    uint32_t errorCode;
-} MapleFileError;
-
-// Pre-built packet structures (with BitPairsMinus1 prefix and CRC suffix)
-typedef struct __attribute__((aligned(4))) {
-    uint32_t           bitPairsMinus1;
-    MaplePacketHeader  header;
-    uint32_t           crc;
-} MapleACKPacket;
-
-typedef struct __attribute__((aligned(4))) {
-    uint32_t           bitPairsMinus1;
-    MaplePacketHeader  header;
-    MapleDeviceInfo    info;
-    uint32_t           crc;
-} MapleInfoPacket;
-
-typedef struct __attribute__((aligned(4))) {
-    uint32_t                  bitPairsMinus1;
-    MaplePacketHeader         header;
-    MapleControllerCondition  controller;
-    uint32_t                  crc;
-} MapleControllerPacket;
-
-typedef struct __attribute__((aligned(4))) {
-    uint32_t          bitPairsMinus1;
-    MaplePacketHeader header;
-    MapleMemoryInfo   memInfo;
-    uint32_t          crc;
-} MapleMemoryInfoPacket;
-
-typedef struct __attribute__((aligned(4))) {
-    uint32_t           bitPairsMinus1;
-    MaplePacketHeader  header;
-    MapleBlockReadData blockRead;
-    uint32_t           crc;
-} MapleBlockReadPacket;
-
-typedef struct __attribute__((aligned(4))) {
-    uint32_t          bitPairsMinus1;
-    MaplePacketHeader header;
-    MapleFileError    fileError;
-    uint32_t          crc;
-} MapleFileErrorPacket;
-
-// RX decoder states
-enum MapleRxState {
-    MAPLE_RX_IDLE,
-    MAPLE_RX_SYNC_WAIT_LOW,
-    MAPLE_RX_SYNC_WAIT_HIGH,
-    MAPLE_RX_DATA_CLOCK_A,
-    MAPLE_RX_DATA_BIT_A,
-    MAPLE_RX_DATA_CLOCK_B,
-    MAPLE_RX_DATA_BIT_B,
-};
-
-// RX receive buffer size (must handle VMU block write: header + func + loc + 32 data words + CRC)
-#define MAPLE_RX_BUF_SIZE  256
+// Convert a wire-order 32-bit value from RX payload to logical (host) order
+static inline uint32_t maple_wire_to_host(uint32_t v) { return __builtin_bswap32(v); }
 
 // TX buffer size (must handle VMU block read: bitPairs + header + func + loc + 128 data words + CRC)
 #define MAPLE_TX_BUF_SIZE  140
 
-// RX DMA ring buffer size (must be power of 2).
-// 256 words = 4096 samples = ~2ms of buffering at Maple Bus rate.
-// Prevents FIFO overflow when main loop has latency spikes (display updates, etc.)
-#define MAPLE_RX_DMA_BUF_WORDS  256
-#define MAPLE_RX_DMA_BUF_BYTES  (MAPLE_RX_DMA_BUF_WORDS * 4)  // 1024
-#define MAPLE_RX_DMA_RING_BITS  10  // log2(1024) = 10
+// RX DMA buffer size in 32-bit words.
+// Must handle largest RX packet: VMU block write = header(1) + func(1) + loc(1) + data(32) + CRC(1) = 36 words.
+// Add margin for the `in null 24` padding at end-of-packet.
+// Not a ring buffer — linear, reset per packet.
+#define MAPLE_RX_DMA_BUF_WORDS  64
 
 // Maple Bus transport layer
 class MapleBus {
@@ -184,14 +97,16 @@ public:
     bool isTransmitting();
 
     // Poll for received packets. Call frequently from main loop.
-    // Drains PIO FIFO, decodes samples, returns true if a complete valid packet is ready.
+    // Returns true if a complete valid packet is ready.
     // On true, outPacket/outLength point to the decoded packet data (excluding CRC).
+    // All data is in wire (network) byte order.
     bool pollReceive(const uint8_t** outPacket, uint* outLength);
 
     // Flush RX FIFO and reset decoder (call after TX to discard echo)
     void flushRx();
 
-    // CRC calculation (Maple Bus XOR-based)
+    // CRC calculation (Maple Bus XOR-based).
+    // Returns the CRC word ready for TX: CRC byte at bits 31:24 (wire order).
     static uint32_t calcCRC(const uint32_t* words, uint numWords);
 
     // Build the BitPairsMinus1 field for a packet of given byte size
@@ -199,52 +114,49 @@ public:
 
     PIO getRxPio() { return rxPio; }
     PIO getTxPio() { return txPio; }
-    uint32_t getFifoReadCount() { return fifoReadCount; }
 
-    // Debug: decoder state tracking
-    uint32_t debugSyncCount = 0;     // Times sync detected (entered data phase)
-    uint32_t debugEndCount = 0;      // Times end-of-packet detected
-    uint32_t debugXorFail = 0;       // Times XOR check failed at end
-    uint16_t debugMaxWritePos = 0;   // Max bytes decoded in any packet attempt
-    uint8_t  debugLastXor = 0;       // Last XOR value at end attempt
-    uint8_t  debugLastBitCount = 0;  // bitCount at last end-of-packet attempt
+    // Check if last pollReceive() detected a corrupt packet (CRC fail or numWords mismatch).
+    // Caller should send REQUEST_RESEND (cmd -4) when this returns true.
+    // Automatically clears the flag after reading.
+    bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
+
+    // Debug counters
+    uint32_t debugXorFail = 0;       // Times CRC check failed
     uint32_t debugPollTrue = 0;      // Times pollReceive returned true
-    uint32_t debugFlushCount = 0;    // FIFO words drained after last TX (echo proof)
     uint32_t debugTxTimeout = 0;     // Times flushRx() timed out waiting for TX completion
     uint32_t debugBusStuckCount = 0; // Times sendPacket() aborted due to bus stuck low
+    uint32_t debugRxTimeout = 0;     // Times RX timed out waiting for end-of-packet
+    uint32_t debugEndIrqCount = 0;   // Times end-of-packet IRQ detected
+    uint32_t debugNumWordsMismatch = 0; // Times numWords field didn't match received word count
 
 private:
     PIO txPio;
     PIO rxPio;
     uint txSm;
     uint txSmOffset;  // TX program offset (needed for SM recovery on timeout)
+    uint rxSm;
+    uint rxSmOffset;  // RX program offset (needed for SM restart)
     uint txDmaChannel;
     uint rxDmaChannel;
     uint pinA;
     uint pinB;
 
     bool initialized;
+    bool lastRxWasCorrupt = false;  // Set by pollReceive() on CRC/numWords failure
 
-    // RX SM program offsets (needed for proper restart after TX)
-    uint rxSmOffsets[3];
+    // RX DMA linear buffer — filled by DMA during one packet reception.
+    // maple_rx PIO produces 32 decoded data bits per FIFO word (= 4 payload bytes).
+    // NO DMA bswap — data stays in wire (network) byte order as received by PIO.
+    // Reset and restarted for each new packet.
+    uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));
+    // Validated packet buffer — data is copied here before returning to caller.
+    // This prevents the DMA from overwriting the packet while the caller processes it.
+    uint32_t rxPacketBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));
+    uint32_t rxDmaInitCount;  // Initial DMA transfer count (for computing words received)
 
-    // RX DMA ring buffer — continuously drains PIO FIFO to prevent overflow.
-    // Must be aligned to buffer size for DMA ring mode.
-    uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(MAPLE_RX_DMA_BUF_BYTES)));
-    volatile uint rxDmaReadPos;  // Our read index into the ring buffer
+    // Timestamp for stale-data timeout
+    uint64_t rxStartTimeUs;
 
-    // RX decoder state
-    MapleRxState rxState;
-    int syncCount;
-    int bitCount;
-    uint8_t currentByte;
-    uint8_t xorCheck;
-    uint writePos;
-    uint8_t rxDecodedBuf[MAPLE_RX_BUF_SIZE] __attribute__((aligned(4)));
-    bool packetComplete;
-    uint32_t fifoReadCount;
-    uint64_t lastSampleTimeUs;  // Timestamp of last DMA data processed (for stale-data timeout)
-
-    // Process one 2-bit pin sample through the decoder state machine
-    void decodeSample(uint8_t pins);
+    // Helper: restart RX SM and DMA for next packet
+    void startRx();
 };
