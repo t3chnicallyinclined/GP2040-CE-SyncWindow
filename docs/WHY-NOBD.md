@@ -4,6 +4,14 @@ If you've ever dropped dashes in MvC2, gotten stray jabs instead of throws, or f
 
 > **Context:** NOBD was built for Marvel vs. Capcom 2 — a game with zero built-in input leniency where split button presses produce the wrong move. The observations and testing described here come from MvC2 via Marvel vs. Capcom Fighting Collection on Steam. Other games may handle input differently.
 
+## About
+
+I'm a cloud engineer, not a firmware dev. I came back to MVC2 after a 15-year hiatus, started playing on Steam, and immediately noticed I was dropping dashes constantly. That sent me down a rabbit hole. **MVC2 is the only fighting game I play and the only game I've tested this with.** The sync window may help other games that require simultaneous button presses, but many modern fighting games have their own input leniency systems that handle this at the software level. I can't make claims about games I haven't tested.
+
+Everything here was pieced together from datasheets, API docs, community threads, trial and error, and a lot of back-and-forth with Claude AI. If you spot something wrong, feel free to correct me.
+
+---
+
 ---
 
 ## The Problem You Can Feel But Can't See
