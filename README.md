@@ -52,7 +52,7 @@ A **Release Debounce** checkbox appears in NOBD mode — enables bounce filterin
 
 GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks directly to the Dreamcast — no adapter, no USB dongle, no level shifter.
 
-**Status:** Beta — fully functional (buttons, d-pad, triggers, analog stick, VMU).
+**Status:** Beta — buttons, d-pad, and triggers confirmed working. Analog stick untested. VMU has known issues.
 
 ### What You Need
 

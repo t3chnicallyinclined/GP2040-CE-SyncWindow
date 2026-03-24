@@ -4,7 +4,7 @@
 
 GP2040-CE NOBD now includes a native **Dreamcast controller output** mode. The RP2040 board communicates directly with the Dreamcast console over the Maple Bus protocol — no adapter, no USB, no level shifter required.
 
-**Status:** Beta — fully functional on real hardware (buttons, dpad, triggers, analog stick).
+**Status:** Beta — buttons, d-pad, and triggers confirmed working on real hardware. Analog stick untested. VMU has known issues.
 
 **Supported boards:** RP2040AdvancedBreakoutBoard (tested), Pico, PicoW, Pico2
 
