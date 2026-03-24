@@ -58,7 +58,7 @@ GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks direct
 
 - RP2040-based GP2040-CE board
 - A Dreamcast controller cable (cut from a broken controller or extension)
-- Soldering iron
+- Soldering iron (not necessary if you have breakout screw terminals like in gp2040 advanced breakout board)
 
 ### Cable Pinout
 
