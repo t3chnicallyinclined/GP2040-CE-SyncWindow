@@ -54,10 +54,9 @@ struct VmuLogEntry {
 // Media info word offset within system block (in 32-bit words)
 #define VMU_MEDIA_INFO_OFFSET   16
 
-// Format version byte stored at system block word 4, bits [15:8] in HOST order.
-// In wire-order flash: stored at bits [23:16] of bswapped word 4.
+// Format version byte stored at system block byte offset 17.
 // Incremented when filesystem layout or byte order changes, forcing re-format.
-#define VMU_FORMAT_VERSION      9
+#define VMU_FORMAT_VERSION      10
 
 class DreamcastVMU {
 public:
@@ -134,7 +133,7 @@ private:
     // Patch just the version byte in-place (single sector write)
     void patchVersionByte();
 
-    // Build media info words (6 words) in wire order for GET_MEDIA_INFO response
+    // Build media info words (6 words) for GET_MEDIA_INFO response
     void buildMediaInfoForWire(uint32_t* out);
 
     // Build media info words (6 words) in wire order for system block flash storage

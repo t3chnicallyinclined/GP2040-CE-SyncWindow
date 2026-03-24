@@ -72,14 +72,10 @@ bool DreamcastVMU::needsFormat() {
 }
 
 bool DreamcastVMU::needsVersionUpdate() {
-    // Version byte is stored in system block word 4.
-    // In HOST order: version at bits [15:8] (byte offset 17).
-    // In wire-order flash (after bswap32): version at bits [23:16].
-    // Read as uint32_t, bswap32 to HOST, extract bits [15:8].
-    const uint32_t* sysBlock32 = (const uint32_t*)(VMU_XIP_BASE + VMU_SYSTEM_BLOCK_NO * VMU_BYTES_PER_BLOCK);
-    uint32_t word4host = __builtin_bswap32(sysBlock32[4]);
-    uint8_t version = (word4host >> 8) & 0xFF;
-    return version != VMU_FORMAT_VERSION;
+    // Version byte is stored at byte offset 17 in the system block.
+    // Read directly — no byte-order conversion needed (single byte).
+    const uint8_t* systemBlock = (const uint8_t*)(VMU_XIP_BASE + VMU_SYSTEM_BLOCK_NO * VMU_BYTES_PER_BLOCK);
+    return systemBlock[17] != VMU_FORMAT_VERSION;
 }
 
 void DreamcastVMU::patchVersionByte() {
@@ -88,11 +84,9 @@ void DreamcastVMU::patchVersionByte() {
     const uint8_t* block = readBlock(VMU_SYSTEM_BLOCK_NO);
     memcpy(writeBuffer, block, VMU_BYTES_PER_BLOCK);
 
-    // writeBuffer is in wire order. Convert word 4 to HOST, set version, convert back.
+    // Version byte is at byte offset 17 — write directly, no byte-order conversion.
     uint32_t* buf32 = (uint32_t*)writeBuffer;
-    uint32_t word4host = __builtin_bswap32(buf32[4]);
-    word4host = (word4host & ~0x0000FF00) | ((uint32_t)VMU_FORMAT_VERSION << 8);
-    buf32[4] = __builtin_bswap32(word4host);
+    writeBuffer[17] = VMU_FORMAT_VERSION;
 
     // Also rewrite the media info section with current constants (wire order)
     buildMediaInfoForFlash(&buf32[VMU_MEDIA_INFO_OFFSET]);
@@ -117,28 +111,43 @@ void DreamcastVMU::buildVMUInfoPacket() {
     uint8_t infoBuf[112];
     memset(infoBuf, 0, sizeof(infoBuf));
 
-    // func (4 bytes, offset 0) — VMU declares storage function only
-    uint32_t func = MAPLE_FUNC_MEMORY_CARD;
+    // func (4 bytes, offset 0) — VMU declares storage + LCD + timer functions
+    // Matches MaplePad: func = 0x0E = FUNC_MEMORY_CARD(2) | FUNC_LCD(4) | FUNC_TIMER(8)
+    uint32_t func = MAPLE_FUNC_MEMORY_CARD | MAPLE_FUNC_LCD | MAPLE_FUNC_TIMER;
     infoBuf[0] = (func >> 0) & 0xFF;
     infoBuf[1] = (func >> 8) & 0xFF;
     infoBuf[2] = (func >> 16) & 0xFF;
     infoBuf[3] = (func >> 24) & 0xFF;
 
-    // funcData[0] (4 bytes, offset 4) — storage function definition
+    // funcData[0] (4 bytes, offset 4) — Timer (FT3) function definition
+    // Matches MaplePad: 0x7E7E3F40
+    uint32_t fd0 = 0x7E7E3F40;
+    infoBuf[4] = (fd0 >> 0) & 0xFF;
+    infoBuf[5] = (fd0 >> 8) & 0xFF;
+    infoBuf[6] = (fd0 >> 16) & 0xFF;
+    infoBuf[7] = (fd0 >> 24) & 0xFF;
+
+    // funcData[1] (4 bytes, offset 8) — LCD (FT2) function definition
+    // Matches MaplePad: 0x00051000
+    uint32_t fd1 = 0x00051000;
+    infoBuf[8] = (fd1 >> 0) & 0xFF;
+    infoBuf[9] = (fd1 >> 8) & 0xFF;
+    infoBuf[10] = (fd1 >> 16) & 0xFF;
+    infoBuf[11] = (fd1 >> 24) & 0xFF;
+
+    // funcData[2] (4 bytes, offset 12) — Storage/Memory (FT1) function definition
     //   bits 7:   removable = 0
     //   bits 6:   CRC needed = 0
     //   bits 11-8:  reads per block = 1
     //   bits 15-12: writes per block = 4
     //   bits 23-16: (bytes_per_block/32 - 1) = 15
     //   bits 31-24: (partitions - 1) = 0
-    // Total: 0x000F4100
-    uint32_t fd0 = 0x000F4100;
-    infoBuf[4] = (fd0 >> 0) & 0xFF;
-    infoBuf[5] = (fd0 >> 8) & 0xFF;
-    infoBuf[6] = (fd0 >> 16) & 0xFF;
-    infoBuf[7] = (fd0 >> 24) & 0xFF;
-
-    // funcData[1], funcData[2] (offsets 8-15) — zero
+    // Matches MaplePad: 0x000F4100
+    uint32_t fd2 = 0x000F4100;
+    infoBuf[12] = (fd2 >> 0) & 0xFF;
+    infoBuf[13] = (fd2 >> 8) & 0xFF;
+    infoBuf[14] = (fd2 >> 16) & 0xFF;
+    infoBuf[15] = (fd2 >> 24) & 0xFF;
 
     // areaCode (1 byte, offset 16)
     infoBuf[16] = 0xFF;  // All regions
@@ -196,54 +205,53 @@ const uint8_t* DreamcastVMU::readBlock(uint16_t blockNum) {
     return (const uint8_t*)(VMU_XIP_BASE + blockNum * VMU_BYTES_PER_BLOCK);
 }
 
-// Build 6 media info words in wire order for GET_MEDIA_INFO response payload.
-// Each word packs two 16-bit LE values. The DC interprets them after its own
-// DMA bswap, so we need them in the same wire format as MaplePad.
-void DreamcastVMU::buildMediaInfoForWire(uint32_t* out) {
-    // Build in HOST order first (two LE uint16 values per uint32):
-    //   hostWord = (upper16 << 16) | lower16
-    // Then bswap32 to wire order.
-    uint32_t host[6];
-    host[0] = ((uint32_t)(VMU_NUM_BLOCKS - 1) << 16) | 0;           // totalBlocks-1, partition
-    host[1] = ((uint32_t)VMU_SYSTEM_BLOCK_NO << 16)  | VMU_FAT_BLOCK_NO;
-    host[2] = ((uint32_t)VMU_NUM_FAT_BLOCKS << 16)   | VMU_FILE_INFO_BLOCK_NO;
-    host[3] = ((uint32_t)VMU_NUM_FILE_INFO << 16)     | 0;
-    host[4] = ((uint32_t)VMU_NUM_SAVE_BLOCKS << 16)   | VMU_SAVE_AREA_BLOCK_NO;
-    host[5] = 0x00008000;  // execution file (icon shape)
+// Build 7 media info words for GET_MEDIA_INFO response payload.
+// Uses DreamPicoPort's U16_TO_UPPER/LOWER_HALF_WORD macros to match exact byte encoding.
+// DreamPicoPort stores these in HOST order and DMA bswap converts to wire.
+// Since we have NO DMA bswap, we bswap32 the macro output to get the same PIO FIFO values.
+#define U16_TO_UPPER_HALF_WORD(val) ((static_cast<uint32_t>(val) << 24) | ((static_cast<uint32_t>(val) << 8) & 0x00FF0000))
+#define U16_TO_LOWER_HALF_WORD(val) (((static_cast<uint32_t>(val) << 8) & 0x0000FF00) | ((static_cast<uint32_t>(val) >> 8) & 0x000000FF))
 
+void DreamcastVMU::buildMediaInfoForWire(uint32_t* out) {
+    // Build in DreamPicoPort HOST format (using their macros), then bswap32 to match
+    // what DreamPicoPort's DMA bswap produces for the PIO FIFO.
+    // 6 words — matches DreamPicoPort's setDefaultMediaInfo() output.
+    static const uint32_t mediaInfo[6] = {
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_BLOCKS - 1) | U16_TO_LOWER_HALF_WORD(0),
+        U16_TO_UPPER_HALF_WORD(VMU_SYSTEM_BLOCK_NO) | U16_TO_LOWER_HALF_WORD(VMU_FAT_BLOCK_NO),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_FAT_BLOCKS) | U16_TO_LOWER_HALF_WORD(VMU_FILE_INFO_BLOCK_NO),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_FILE_INFO) | U16_TO_LOWER_HALF_WORD(0),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_SAVE_BLOCKS) | U16_TO_LOWER_HALF_WORD(VMU_SAVE_AREA_BLOCK_NO),
+        0x00008000   // execution file
+    };
     for (int i = 0; i < 6; i++) {
-        out[i] = __builtin_bswap32(host[i]);
+        out[i] = __builtin_bswap32(mediaInfo[i]);
     }
 }
 
-// Build 6 media info words in wire order for system block flash storage.
-// Same encoding as buildMediaInfoForWire — flash stores wire-order data
-// which gets sent to DC via memcpy (zero conversion).
+// Build 6 media info words for system block flash storage.
+// Flash data is sent via memcpy to PIO (no conversion). Must match DreamPicoPort's
+// flash format: flipWordBytes(HOST_macros) for each word.
 void DreamcastVMU::buildMediaInfoForFlash(uint32_t* out) {
-    // For flash, we need the media info in the format that the DC will see
-    // when it reads the system block. The DC reads raw wire-order data and
-    // interprets each uint32 as two LE uint16 values (after its own bswap).
-    //
-    // Build as two LE uint16 values packed per uint32 in HOST order,
-    // then bswap32 to wire order for flash storage.
-    uint32_t host[6];
-    host[0] = (uint32_t)(VMU_NUM_BLOCKS - 1)  | (0 << 16);
-    host[1] = (uint32_t)VMU_SYSTEM_BLOCK_NO    | ((uint32_t)VMU_FAT_BLOCK_NO << 16);
-    host[2] = (uint32_t)VMU_NUM_FAT_BLOCKS     | ((uint32_t)VMU_FILE_INFO_BLOCK_NO << 16);
-    host[3] = (uint32_t)VMU_NUM_FILE_INFO      | (0 << 16);
-    host[4] = (uint32_t)VMU_NUM_SAVE_BLOCKS    | ((uint32_t)VMU_SAVE_AREA_BLOCK_NO << 16);
-    host[5] = 0x00800000;  // execution file
-
+    // DreamPicoPort stores setDefaultMediaInfoFlipped() = flipWordBytes of macro HOST values.
+    // flipWordBytes(HOST_macros) is equivalent to bswap32(HOST_macros).
+    static const uint32_t mediaInfo[6] = {
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_BLOCKS - 1) | U16_TO_LOWER_HALF_WORD(0),
+        U16_TO_UPPER_HALF_WORD(VMU_SYSTEM_BLOCK_NO) | U16_TO_LOWER_HALF_WORD(VMU_FAT_BLOCK_NO),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_FAT_BLOCKS) | U16_TO_LOWER_HALF_WORD(VMU_FILE_INFO_BLOCK_NO),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_FILE_INFO) | U16_TO_LOWER_HALF_WORD(0),
+        U16_TO_UPPER_HALF_WORD(VMU_NUM_SAVE_BLOCKS) | U16_TO_LOWER_HALF_WORD(VMU_SAVE_AREA_BLOCK_NO),
+        0x00008000  // execution file
+    };
     for (int i = 0; i < 6; i++) {
-        out[i] = __builtin_bswap32(host[i]);
+        out[i] = __builtin_bswap32(mediaInfo[i]);
     }
 }
 
 void DreamcastVMU::format() {
     // Format creates the minimum VMU filesystem: system block, FAT, and empty file info.
-    // All data stored in wire (network) byte order — matches MaplePad's approach.
-    // When the DC reads blocks via BLOCK_READ, the wire-order data goes directly to
-    // the TX buffer (memcpy, zero conversion). DC's own DMA bswap converts to HOST.
+    // Flash format matches DreamPicoPort: each HOST-order word is flipWordBytes'd (= bswap32'd)
+    // before storing. BLOCK_READ sends flash data directly to PIO via memcpy (no conversion).
 
     uint8_t blockBuf[VMU_BYTES_PER_BLOCK];
     uint32_t* block32 = (uint32_t*)blockBuf;
@@ -251,36 +259,24 @@ void DreamcastVMU::format() {
     //
     // System Block (block 255)
     //
-    // Build in HOST order first, then bswap32 every word to wire order.
+    // Matches DreamPicoPort format(): each value is individually bswap32'd before storing.
     memset(blockBuf, 0, VMU_BYTES_PER_BLOCK);
 
-    // Signature: first 16 bytes all 0x55 (marks formatted VMU)
-    // 0x55 is byte-palindromic — bswap32(0x55555555) = 0x55555555
+    // Signature: first 16 bytes all 0x55 (byte-palindromic)
     memset(blockBuf, 0x55, 16);
 
-    // Format version at HOST byte offset 17 (word 4, bits [15:8])
-    // We set it in the HOST-order buffer; bswap32 moves it to bits [23:16] in wire order.
+    // Format version — our addition, not in DreamPicoPort.
+    // Store at byte offset 17 in the buffer (same position regardless of byte order
+    // since we control both read and write of this value).
     blockBuf[17] = VMU_FORMAT_VERSION;
 
-    // Date/time markers at byte offset 0x030 (word 12)
-    // BCD format: century, year, month, day, hour, min, sec, weekday
-    block32[12] = 0x19990909;
-    block32[13] = 0x00001000;
+    // Date/time markers at word 12-13. DreamPicoPort: flipWordBytes(0x19990909) etc.
+    block32[12] = __builtin_bswap32(0x19990909);
+    block32[13] = __builtin_bswap32(0x00001000);
 
-    // Media info at word offset 16 — build in HOST LE 16-bit format
-    // (two LE uint16 values per uint32)
-    uint32_t* mediaSlot = &block32[VMU_MEDIA_INFO_OFFSET];
-    mediaSlot[0] = (uint32_t)(VMU_NUM_BLOCKS - 1)  | (0 << 16);
-    mediaSlot[1] = (uint32_t)VMU_SYSTEM_BLOCK_NO    | ((uint32_t)VMU_FAT_BLOCK_NO << 16);
-    mediaSlot[2] = (uint32_t)VMU_NUM_FAT_BLOCKS     | ((uint32_t)VMU_FILE_INFO_BLOCK_NO << 16);
-    mediaSlot[3] = (uint32_t)VMU_NUM_FILE_INFO      | (0 << 16);
-    mediaSlot[4] = (uint32_t)VMU_NUM_SAVE_BLOCKS    | ((uint32_t)VMU_SAVE_AREA_BLOCK_NO << 16);
-    mediaSlot[5] = 0x00800000;  // execution file
-
-    // Convert entire system block from HOST to wire order
-    for (int i = 0; i < VMU_WORDS_PER_BLOCK; i++) {
-        block32[i] = __builtin_bswap32(block32[i]);
-    }
+    // Media info at word offset 16 — matches DreamPicoPort's setDefaultMediaInfoFlipped().
+    // DreamPicoPort builds with U16_TO macros then flipWordBytes each word.
+    buildMediaInfoForFlash(&block32[VMU_MEDIA_INFO_OFFSET]);
 
     // Write system block to flash
     flashWriteBlockNum = VMU_SYSTEM_BLOCK_NO;
@@ -290,9 +286,16 @@ void DreamcastVMU::format() {
     //
     // FAT Block (block 254)
     //
-    // FAT has 256 entries (one per block), each 16 bits LE.
-    // 256 * 2 = 512 bytes = one block.
-    // Build in HOST order (native LE uint16 array), then bswap32 each uint32 word.
+    // DreamPicoPort builds FAT in macro format then flipWordBytes each word.
+    // For our architecture: build using the same U16 macros then bswap32.
+    // Initial fill: all entries = 0xFFFC (free)
+    uint32_t freeWord = U16_TO_UPPER_HALF_WORD(0xFFFC) | U16_TO_LOWER_HALF_WORD(0xFFFC);
+    for (int i = 0; i < VMU_WORDS_PER_BLOCK; i++) {
+        block32[i] = __builtin_bswap32(freeWord);
+    }
+
+    // Now build the FAT entries using a uint16 array approach (simpler),
+    // then re-pack with the macros.
     uint16_t fat16[256];
     for (int i = 0; i < 256; i++) {
         fat16[i] = 0xFFFC;  // Free
@@ -310,10 +313,10 @@ void DreamcastVMU::format() {
     }
     fat16[VMU_FILE_INFO_BLOCK_NO - VMU_NUM_FILE_INFO + 1] = 0xFFFA;  // End of chain
 
-    // Pack into uint32 words (HOST order: two LE uint16 per word), then bswap32
+    // Pack into uint32 words using DreamPicoPort's macro format, then bswap32
     for (int i = 0; i < 128; i++) {
-        uint32_t hostWord = (uint32_t)fat16[2*i] | ((uint32_t)fat16[2*i+1] << 16);
-        block32[i] = __builtin_bswap32(hostWord);
+        uint32_t macroWord = U16_TO_UPPER_HALF_WORD(fat16[2*i]) | U16_TO_LOWER_HALF_WORD(fat16[2*i+1]);
+        block32[i] = __builtin_bswap32(macroWord);
     }
 
     // Write FAT block to flash
@@ -377,6 +380,7 @@ void DreamcastVMU::sendAckResponse(uint8_t port, MapleBus& bus) {
 
 void DreamcastVMU::sendMemoryInfoResponse(uint8_t port, MapleBus& bus) {
     // GET_MEDIA_INFO response: funcCode + 6 media info words = 7 payload words
+    // Matches DreamPicoPort: payload[7] = {mFunctionCode, mediaInfo[0..5]}
     static uint32_t pkt[10];  // bitpairs + header + 7 payload + CRC
     memset(pkt, 0, sizeof(pkt));
 
@@ -386,7 +390,7 @@ void DreamcastVMU::sendMemoryInfoResponse(uint8_t port, MapleBus& bus) {
     pkt[0] = MapleBus::calcBitPairs(sizeof(pkt));
     pkt[1] = maple_make_header(7, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
     pkt[2] = MAPLE_FUNC_MEMORY_CARD_WIRE;  // funcCode in wire order
-    buildMediaInfoForWire(&pkt[3]);          // 6 media info words in wire order
+    buildMediaInfoForWire(&pkt[3]);          // 6 media info words
 
     pkt[9] = MapleBus::calcCRC(&pkt[1], 8);  // header + 7 payload words
     bus.sendPacket(pkt, 10);
@@ -618,14 +622,14 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
             }
 
             // System block override: if DC writes system block with zero save area
-            // media info, fill it with our default values (in wire order).
+            // media info, fill it with our default values.
+            // Matches DreamPicoPort: setDefaultMediaInfoFlipped(saveAreaWord, SAVE_AREA_MEDIA_INFO_OFFSET, 1)
             if (blockNum == VMU_SYSTEM_BLOCK_NO) {
                 uint32_t* buf32 = (uint32_t*)writeBuffer;
-                uint32_t saveWord = buf32[VMU_MEDIA_INFO_OFFSET + 4];
-                if (saveWord == 0) {
-                    // Build in HOST, bswap32 to wire order
-                    uint32_t hostVal = (uint32_t)VMU_NUM_SAVE_BLOCKS | ((uint32_t)VMU_SAVE_AREA_BLOCK_NO << 16);
-                    buf32[VMU_MEDIA_INFO_OFFSET + 4] = __builtin_bswap32(hostVal);
+                if (buf32[VMU_MEDIA_INFO_OFFSET + 4] == 0) {
+                    uint32_t macroVal = U16_TO_UPPER_HALF_WORD(VMU_NUM_SAVE_BLOCKS)
+                                      | U16_TO_LOWER_HALF_WORD(VMU_SAVE_AREA_BLOCK_NO);
+                    buf32[VMU_MEDIA_INFO_OFFSET + 4] = __builtin_bswap32(macroVal);
                 }
             }
 
