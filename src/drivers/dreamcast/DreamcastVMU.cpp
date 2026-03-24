@@ -1,6 +1,6 @@
 #include "drivers/dreamcast/DreamcastVMU.h"
 #include "hardware/flash.h"
-#include "hardware/sync.h"
+#include "hardware/sync.h"  // for __dmb()
 #include "pico/time.h"
 
 // Dreamcast VMU sub-peripheral — wire-order architecture (NO DMA bswap).
@@ -18,11 +18,12 @@ DreamcastVMU::DreamcastVMU()
     : flashWriteBlockNum(0),
       currentWriteBlock(0xFFFF), writePhaseMask(0) {
     memset(writeBuffer, 0, sizeof(writeBuffer));
+    memset(pendingWriteData, 0, sizeof(pendingWriteData));
     memset(sectorBuffer, 0, sizeof(sectorBuffer));
     memset(cmdLog, 0, sizeof(cmdLog));
 }
 
-void DreamcastVMU::logCommand(uint8_t cmd, uint8_t response, uint32_t funcCode,
+void __no_inline_not_in_flash_func(DreamcastVMU::logCommand)(uint8_t cmd, uint8_t response, uint32_t funcCode,
                                uint32_t locWord, uint16_t blockNum, uint8_t phase,
                                uint8_t pWords, const uint8_t* rawPayload,
                                uint rawPayloadLen) {
@@ -200,9 +201,27 @@ void DreamcastVMU::buildVMUAckPacket() {
     );
 }
 
-const uint8_t* DreamcastVMU::readBlock(uint16_t blockNum) {
+const uint8_t* __no_inline_not_in_flash_func(DreamcastVMU::readBlock)(uint16_t blockNum) {
     if (blockNum >= VMU_NUM_BLOCKS) return nullptr;
     return (const uint8_t*)(VMU_XIP_BASE + blockNum * VMU_BYTES_PER_BLOCK);
+}
+
+void DreamcastVMU::doFlashWriteFromCore1() {
+    // Called from Core 1 only. pendingFlashWrite is set by Core 0 after ACK is sent.
+    // Reads the pending block number and data, then erases+programs the flash sector.
+    // Core 0's Maple Bus hot path is RAM-resident so it keeps running uninterrupted.
+    if (!pendingFlashWrite) return;
+
+    uint16_t blockNum = pendingWriteBlockNum;
+    memcpy(writeBuffer, pendingWriteData, VMU_BYTES_PER_BLOCK);
+
+    flashWriteBlockNum = blockNum;
+    debugVmuFlashCount++;
+    debugVmuLastFlashBlock = blockNum;
+    doFlashWrite();  // XIP disabled during this — Core 0 must be spinning in RAM
+
+    __dmb();
+    pendingFlashWrite = false;  // Clear AFTER flash op — Core 0 spin loop exits now
 }
 
 // Build 7 media info words for GET_MEDIA_INFO response payload.
@@ -338,21 +357,23 @@ void DreamcastVMU::format() {
 void DreamcastVMU::doFlashWrite() {
     // Read-modify-write: read the full 4KB sector, modify the target block, write back.
     // VMU blocks are 512 bytes, flash sectors are 4KB (8 blocks per sector).
+    // Must be called from Core 1 only — flash ops block XIP for the entire chip.
+    // Core 0's Maple Bus hot path is RAM-resident and keeps running.
     uint32_t blockFlashOffset = VMU_FLASH_OFFSET + flashWriteBlockNum * VMU_BYTES_PER_BLOCK;
-    uint32_t sectorStart = blockFlashOffset & ~(FLASH_SECTOR_SIZE - 1);  // Align to sector
+    uint32_t sectorStart = blockFlashOffset & ~(FLASH_SECTOR_SIZE - 1);
     uint32_t offsetInSector = blockFlashOffset - sectorStart;
 
-    // Read current sector from XIP
+    // Read current sector from XIP (must happen before flash_range_erase disables XIP)
     memcpy(sectorBuffer, (const uint8_t*)(XIP_BASE + sectorStart), FLASH_SECTOR_SIZE);
 
     // Merge the new block data
     memcpy(sectorBuffer + offsetInSector, writeBuffer, VMU_BYTES_PER_BLOCK);
 
-    // Erase and reprogram the sector with interrupts disabled
-    uint32_t interrupts = save_and_disable_interrupts();
+    // Erase and reprogram. The Pico SDK's flash functions handle multicore safety
+    // internally — Core 0 is briefly paused in its RAM-resident interrupt handler
+    // while XIP is disabled, then automatically resumed when flash op completes.
     flash_range_erase(sectorStart, FLASH_SECTOR_SIZE);
     flash_range_program(sectorStart, sectorBuffer, FLASH_SECTOR_SIZE);
-    restore_interrupts(interrupts);
 }
 
 
@@ -360,7 +381,7 @@ void DreamcastVMU::doFlashWrite() {
 // Response packet builders (wire order)
 // ============================================================
 
-void DreamcastVMU::sendInfoResponse(uint8_t port, MapleBus& bus) {
+void __no_inline_not_in_flash_func(DreamcastVMU::sendInfoResponse)(uint8_t port, MapleBus& bus) {
     uint8_t origin = (MAPLE_SUB0_ADDR & MAPLE_PERIPH_MASK) | port;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
 
@@ -369,7 +390,7 @@ void DreamcastVMU::sendInfoResponse(uint8_t port, MapleBus& bus) {
     bus.sendPacket(vmuInfoBuf, 31);
 }
 
-void DreamcastVMU::sendAckResponse(uint8_t port, MapleBus& bus) {
+void __no_inline_not_in_flash_func(DreamcastVMU::sendAckResponse)(uint8_t port, MapleBus& bus) {
     uint8_t origin = (MAPLE_SUB0_ADDR & MAPLE_PERIPH_MASK) | port;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
 
@@ -378,7 +399,7 @@ void DreamcastVMU::sendAckResponse(uint8_t port, MapleBus& bus) {
     bus.sendPacket(vmuAckBuf, 3);
 }
 
-void DreamcastVMU::sendMemoryInfoResponse(uint8_t port, MapleBus& bus) {
+void __no_inline_not_in_flash_func(DreamcastVMU::sendMemoryInfoResponse)(uint8_t port, MapleBus& bus) {
     // GET_MEDIA_INFO response: funcCode + 6 media info words = 7 payload words
     // Matches DreamPicoPort: payload[7] = {mFunctionCode, mediaInfo[0..5]}
     static uint32_t pkt[10];  // bitpairs + header + 7 payload + CRC
@@ -396,7 +417,7 @@ void DreamcastVMU::sendMemoryInfoResponse(uint8_t port, MapleBus& bus) {
     bus.sendPacket(pkt, 10);
 }
 
-void DreamcastVMU::sendBlockReadResponse(uint16_t blockNum, uint32_t locWord, uint8_t port, MapleBus& bus) {
+void __no_inline_not_in_flash_func(DreamcastVMU::sendBlockReadResponse)(uint16_t blockNum, uint32_t locWord, uint8_t port, MapleBus& bus) {
     // BLOCK_READ response: funcCode + locWord + 128 data words = 130 payload words
     static uint32_t pkt[134];  // bitpairs + header + 130 payload + CRC
 
@@ -421,7 +442,7 @@ void DreamcastVMU::sendBlockReadResponse(uint16_t blockNum, uint32_t locWord, ui
     bus.sendPacket(pkt, 134);
 }
 
-void DreamcastVMU::sendFileErrorResponse(uint32_t errorCode, uint8_t port, MapleBus& bus) {
+void __no_inline_not_in_flash_func(DreamcastVMU::sendFileErrorResponse)(uint32_t errorCode, uint8_t port, MapleBus& bus) {
     static uint32_t pkt[4];  // bitpairs + header + errorCode + CRC
     memset(pkt, 0, sizeof(pkt));
 
@@ -442,7 +463,7 @@ void DreamcastVMU::sendFileErrorResponse(uint32_t errorCode, uint8_t port, Maple
 // Main command handler (wire-order packet parsing)
 // ============================================================
 
-bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port, MapleBus& bus) {
+bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* packet, uint rxLen, uint8_t port, MapleBus& bus) {
     // Parse header from wire-order word
     uint32_t hdrWord = ((const uint32_t*)packet)[0];
     int8_t cmd = maple_hdr_command(hdrWord);
@@ -633,14 +654,26 @@ bool DreamcastVMU::handleCommand(const uint8_t* packet, uint rxLen, uint8_t port
                 }
             }
 
-            flashWriteBlockNum = blockNum;
             currentWriteBlock = 0xFFFF;
             writePhaseMask = 0;
-            doFlashWrite();
 
             logCommand(0x0D, MAPLE_CMD_RESPOND_ACK, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
             sendAckResponse(port, bus);
             debugVmuTxCount++;
+
+            // Stage write for Core 1, then spin in RAM until Core 1 finishes.
+            // Core 0 must not execute flash-resident code while Core 1 has XIP disabled
+            // during flash_range_erase/program. Spinning here keeps Core 0 in this
+            // RAM-resident function for the ~50-150ms the flash op takes.
+            // The DC is processing our ACK during this time and won't send another command.
+            memcpy(pendingWriteData, writeBuffer, VMU_BYTES_PER_BLOCK);
+            pendingWriteBlockNum = blockNum;
+            __dmb();
+            pendingFlashWrite = true;
+            // Spin in RAM until Core 1 clears the flag
+            while (pendingFlashWrite) {
+                __dmb();
+            }
             return true;
         }
 
