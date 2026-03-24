@@ -77,12 +77,14 @@ GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks direct
 | DC Cable | Board Connection | Notes |
 |----------|----------------|-------|
 | Red (VCC) | VCC | Board is powered directly by the DC's 5V |
-| Green (SDCKA) | GPIO 23 | Maple Bus Data A |
-| Blue (SDCKB) | GPIO 24 | Maple Bus Data B |
+| Green (SDCKA) | GPIO 2 | Maple Bus Data A (default) |
+| Blue (SDCKB) | GPIO 3 | Maple Bus Data B (default) |
 | White (Sense) | GND | Tie directly to ground — tells DC a device is present |
 | Black (GND) | GND | Common ground |
 
-> GPIO 23/24 are the defaults. These can be changed in the web UI.
+> **Important — RP2040AdvancedBreakoutBoard:** The board has a physical switch that selects between USB and the Options/Aux header. **Flip it to the Options position** before connecting to the Dreamcast, otherwise the board won't power on from the DC's 5V line.
+
+> The Maple Bus pins default to GPIO 2/3. If you wire to different pins, update them in the web UI under **Settings → Dreamcast** so the firmware knows where to look.
 
 ### Wiring Photos
 

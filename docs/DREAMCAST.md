@@ -38,20 +38,20 @@ Connect to the **screw terminal** on the board:
 | DC Cable | Screw Terminal | Notes |
 |----------|---------------|-------|
 | Red (VCC) | VCC | Powers the board from Dreamcast 5V |
-| Green (SDCKA) | GPIO pin configured as DC Data 1 | Default: GPIO 28 |
-| Blue (SDCKB) | GPIO pin configured as DC Data 2 | Default: GPIO 29 |
+| Green (SDCKA) | GPIO 2 | Maple Bus Data A (default) |
+| Blue (SDCKB) | GPIO 3 | Maple Bus Data B (default) |
 | White (Sense) | GND | Directly tie to ground (tells DC a device is connected) |
 | Black (GND) | GND | Common ground |
 
 > **Important:** The Sense pin must be tied to GND for the Dreamcast to detect the controller. This tells the console a peripheral is plugged in.
 
+> **RP2040AdvancedBreakoutBoard:** Flip the physical switch on the board from **USB to Options** before connecting to the Dreamcast. Without this, the board won't receive power from the DC's 5V line.
+
 ### GPIO Pin Configuration
 
-The Dreamcast data pins are configured in `proto/enums.proto` and default to:
-- **SDCKA (Data 1):** GPIO 28
-- **SDCKB (Data 2):** GPIO 29
+The Dreamcast data pins default to GPIO 2/3 and can be changed in the web UI under **Settings → Dreamcast**.
 
-These can be changed in the board configuration or web UI.
+Avoid GPIO 23, 24, and 26–29 on the RP2040AdvancedBreakoutBoard — these pins have on-board circuitry (SMPS, VBUS sense, ADC) that causes signal noise at Maple Bus speeds and will result in data corruption. Pins must be consecutive (Data B = Data A + 1) for the PIO state machine to work correctly.
 
 ### Power Notes
 
@@ -166,13 +166,16 @@ Maple Bus uses an 8-bit XOR-based CRC:
 
 ### DC Sync Modes
 
-The driver supports three sync modes for managing input timing relative to the Dreamcast's 60Hz polling:
+The driver supports two sync modes for managing input timing relative to the Dreamcast's 60Hz polling:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **OFF (0)** | Raw gamepad state sent immediately on each poll | Lowest latency, no input grouping |
 | **Accumulate (1)** | Collects all button presses between polls, sends accumulated state | Default — prevents dropped inputs between 60Hz polls |
-| **Window (2)** | Delays response after detecting a press to group simultaneous inputs | Fighting games — ensures dashes/throws register together |
+
+**Why no Window mode?** The NOBD sync window already handles press grouping at the GPIO level. A DC-specific window would be redundant — Accumulate catches everything NOBD groups, plus any presses that happen in the ~16.7ms gaps between DC polls.
+
+**Accumulate details:** Every `process()` call, the driver OR's the current button/dpad state into accumulators and tracks max trigger values. When the Dreamcast sends CMD 9 (GET_CONDITION), the accumulated state is sent and the accumulators reset. This means a brief tap that starts and ends between two polls will still be reported.
 
 ---
 
@@ -185,6 +188,15 @@ When in Dreamcast mode, the NOBD sync window still works at the GPIO level. The 
 3. The combined effect: presses within the NOBD window are guaranteed to arrive on the same Dreamcast frame
 
 This is the same NOBD benefit as USB mode — reliable dashes, throw techs, and multi-button inputs.
+
+### Wiring Options
+
+The Dreamcast data pins can be connected via:
+
+1. **Screw terminals** — solder DC cable directly to GPIO pins on the screw terminal row
+2. **USB-A passthrough port** — on boards with USB passthrough (e.g., ABOB Passthrough), GPIO 23/24 route through the USB-A connector when the SMD switch is in "USB" position. Use a USB-A to Dreamcast cable (or USB-A → RJ45 adapter → RJ45-to-DC cable for future retro console expandability).
+
+Both methods use the same firmware — only the physical connector differs. Configure `dreamcastPinA` and `dreamcastPinB` in the web UI to match your wiring.
 
 ### DPad Mode
 
