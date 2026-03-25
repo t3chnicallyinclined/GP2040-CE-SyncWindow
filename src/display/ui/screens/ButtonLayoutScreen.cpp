@@ -294,18 +294,18 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
-    // Dreamcast diagnostic mode — S1 (Select) toggles, takes over full display
+    // Dreamcast diagnostic mode — hold S1 (Select) for 3 seconds to toggle
     DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
         static bool dcDiagMode = false;
         static uint64_t s1HoldStart = 0;
-        static bool s1Toggled = false;  // prevent repeated toggles while held
+        static bool s1Toggled = false;
         bool s1Held = (getGamepad()->state.buttons & GAMEPAD_MASK_S1) != 0;
         if (s1Held) {
             if (s1HoldStart == 0) {
                 s1HoldStart = time_us_64();
                 s1Toggled = false;
-            } else if (!s1Toggled && (time_us_64() - s1HoldStart) >= 3000000) {  // 3 seconds
+            } else if (!s1Toggled && (time_us_64() - s1HoldStart) >= 3000000) {
                 dcDiagMode = !dcDiagMode;
                 dcDriver->enableDiagnostics = dcDiagMode;
                 dcDriver->vmu.enableCommandLog = dcDiagMode;
@@ -341,7 +341,7 @@ void ButtonLayoutScreen::drawScreen() {
         }
     }
 
-    // Standard display — DC uses the same layout as all other input modes
+    // Standard display path — identical for ALL input modes including Dreamcast
     if (bannerDisplay) {
         getRenderer()->drawRectangle(0, 0, 128, 7, true, true);
     	getRenderer()->drawText(0, 0, statusBar, true);

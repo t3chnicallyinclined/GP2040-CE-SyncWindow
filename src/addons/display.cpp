@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 
 #include "drivermanager.h"
+#include "drivers/dreamcast/DreamcastDriver.h"
 #include "usbdriver.h"
 #include "version.h"
 #include "config.pb.h"
@@ -204,16 +205,20 @@ void DisplayAddon::process() {
         return;
     }
 
-    // Rate-limit display updates in Dreamcast mode to avoid blocking the main loop.
-    // OLED I2C draws take 10-50ms, but the DC expects responses within ~1ms.
-    // Only redraw every 100ms (~10 FPS) — keeps diagnostics visible without
-    // causing the DC to timeout and disconnect.
+    // Dreamcast mode: only redraw on VMU activity, diagnostic mode, or first boot.
+    // OLED retains last image — zero CPU overhead during gameplay.
     if (inputMode == INPUT_MODE_DREAMCAST) {
-        uint32_t nowMs = to_ms_since_boot(get_absolute_time());
-        if ((nowMs - dcLastDrawMs) < 100) {
-            return;  // Skip this iteration — too soon since last draw
+        DreamcastDriver* dc = DriverManager::getInstance().getDCDriver();
+        if (dc && !dc->enableDiagnostics) {
+            static uint32_t dcLastFlashCount = 0xFFFFFFFF;  // force initial draw
+            static bool dcInitialDrawDone = false;
+            uint32_t currentFlash = dc->vmu.debugVmuFlashCount;
+            if (dcInitialDrawDone && currentFlash == dcLastFlashCount) {
+                return;  // No VMU activity — skip draw entirely
+            }
+            dcLastFlashCount = currentFlash;
+            dcInitialDrawDone = true;
         }
-        dcLastDrawMs = nowMs;
     }
 
     // Core0 requested a new display mode
