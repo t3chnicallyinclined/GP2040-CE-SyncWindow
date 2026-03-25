@@ -52,7 +52,7 @@ A **Release Debounce** checkbox appears in NOBD mode — enables bounce filterin
 
 GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks directly to the Dreamcast — no adapter, no USB dongle, no level shifter.
 
-**Status:** Beta — buttons, d-pad, and triggers confirmed working. Analog stick untested. VMU save/load confirmed working (saves persist through power cycle).
+**Status:** Beta — buttons, d-pad, triggers, and VMU save/load all confirmed working on real hardware. Analog stick untested.
 
 ### What You Need
 
@@ -101,7 +101,54 @@ GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks direct
 
 Hold **L1** while plugging in the board. The OLED will show the DC mode indicator.
 
+<!-- SCREENSHOT: OLED showing Dreamcast mode indicator -->
+![Dreamcast mode OLED placeholder](docs/images/dc-mode-oled-placeholder.png)
+
 For full Dreamcast wiring details and troubleshooting, see [docs/DREAMCAST.md](docs/DREAMCAST.md).
+
+### Selecting Dreamcast in the Web UI
+
+In the web UI, go to **Settings → Input Mode** and select **Dreamcast** from the dropdown. The Dreamcast GPIO pin settings and VMU Manager link appear below.
+
+<!-- SCREENSHOT: Settings page with Dreamcast selected in Input Mode dropdown, showing GPIO pin fields and VMU Manager link -->
+![Dreamcast input mode selection placeholder](docs/images/dc-input-mode-placeholder.png)
+
+---
+
+## VMU Manager
+
+Manage your Dreamcast VMU saves from the web UI — no real VMU hardware needed.
+
+<!-- SCREENSHOT: Full VMU Manager page showing all 3 sections (Export, Import, Format) -->
+![VMU Manager page placeholder](docs/images/vmu-manager-placeholder.png)
+
+### Export
+
+Download a complete 128KB backup of your VMU as a `.bin` file. Useful for archiving saves or transferring to other tools.
+
+### Import (.dci)
+
+Upload a `.dci` save file (Nexus Memory Manager / Dreamcast Memory Manager format). The import automatically:
+- Converts byte order (DCI → flash format)
+- Allocates blocks top-down (matching Dreamcast convention)
+- Replaces any existing save with the same filename
+
+<!-- SCREENSHOT: Successful DCI import message -->
+![DCI import success placeholder](docs/images/dci-import-success-placeholder.png)
+
+<!-- SCREENSHOT: MvC2 character select showing all characters unlocked after DCI import -->
+![MvC2 all characters unlocked placeholder](docs/images/mvc2-all-chars-placeholder.png)
+
+### Format
+
+Wipe and re-format the VMU. Requires typing "FORMAT" to confirm — all saves are permanently deleted.
+
+### Input Timing for Dreamcast
+
+Debounce and NOBD sync windows are generally unnecessary in Dreamcast mode. The 16ms Maple Bus polling interval acts as a natural sync window — simultaneous presses within that window always land on the same frame. The default for fresh installs is Stock Debounce 0 (raw passthrough).
+
+<!-- SCREENSHOT: Input timing section showing the Dreamcast debounce hint -->
+![Dreamcast debounce hint placeholder](docs/images/dc-debounce-hint-placeholder.png)
 
 ---
 
@@ -131,6 +178,8 @@ See [docs/README.md](docs/README.md) — covers how this project was built using
 
 - [Why NOBD — Technical Deep Dive](docs/WHY-NOBD.md)
 - [Dreamcast Wiring Guide](docs/DREAMCAST.md)
+- [VMU Expert Reference](docs/vmu_expert_reference.md)
+- [Dreamcast Maple Bus Reference](docs/dreamcast_maple_expert.md)
 - [Contributing & AI-Assisted Dev Guide](docs/README.md)
 - [Finger Gap Tester](https://github.com/t3chnicallyinclined/finger-gap-tester)
 - [GP2040-CE upstream](https://gp2040-ce.info/)
