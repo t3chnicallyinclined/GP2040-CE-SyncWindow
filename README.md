@@ -99,7 +99,7 @@ GP2040-CE NOBD includes a native Maple Bus driver. Your fight stick talks direct
 
 ### Activating Dreamcast Mode
 
-Hold **L1** while plugging in the board. The OLED will show the DC mode indicator.
+Hold **L1** while plugging in the board. (or use the webui, the hot button can be configured)
 
 <!-- SCREENSHOT: OLED showing Dreamcast mode indicator -->
 ![Dreamcast mode OLED placeholder](docs/images/dc-mode-oled-placeholder.png)
