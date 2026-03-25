@@ -26,7 +26,8 @@ void ButtonLayoutScreen::init() {
     setViewport((isInputHistoryEnabled ? 8 : 0), 0, (isInputHistoryEnabled ? 56 : getRenderer()->getDriver()->getMetrics()->height), getRenderer()->getDriver()->getMetrics()->width);
 
 	// load layout (drawElement pushes element to the display list)
-    {
+    // DC mode: skip widgets — display shows only the status bar text
+    if (inputMode != INPUT_MODE_DREAMCAST) {
         uint16_t elementCtr = 0;
         LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
         LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
@@ -38,8 +39,8 @@ void ButtonLayoutScreen::init() {
         }
     }
 
-	// start with profile mode displayed
-	bannerDisplay = true;
+	// start with profile mode displayed (skip in DC mode — draws once then idles)
+	bannerDisplay = (inputMode != INPUT_MODE_DREAMCAST);
     prevProfileNumber = -1;
 
     prevLayoutLeft = Storage::getInstance().getDisplayOptions().buttonLayout;
@@ -110,11 +111,13 @@ int8_t ButtonLayoutScreen::update() {
         }
     }
 
-    // main logic loop
+    // main logic loop — skip profile banner in DC mode (display draws once then idles)
     if (prevProfileNumber != profileNumber) {
-        bannerDelayStart = getMillis();
         prevProfileNumber = profileNumber;
-        bannerDisplay = true;
+        if (inputMode != INPUT_MODE_DREAMCAST) {
+            bannerDelayStart = getMillis();
+            bannerDisplay = true;
+        }
     }
 
     // main logic loop
@@ -294,51 +297,32 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
-    // Dreamcast diagnostic mode — hold S1 (Select) for 3 seconds to toggle
+    // Dreamcast diagnostic mode — rendered here when enableDiagnostics is on
+    // (toggle is handled in display addon process(), not here)
     DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
-    if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
-        static bool dcDiagMode = false;
-        static uint64_t s1HoldStart = 0;
-        static bool s1Toggled = false;
-        bool s1Held = (getGamepad()->state.buttons & GAMEPAD_MASK_S1) != 0;
-        if (s1Held) {
-            if (s1HoldStart == 0) {
-                s1HoldStart = time_us_64();
-                s1Toggled = false;
-            } else if (!s1Toggled && (time_us_64() - s1HoldStart) >= 3000000) {
-                dcDiagMode = !dcDiagMode;
-                dcDriver->enableDiagnostics = dcDiagMode;
-                dcDriver->vmu.enableCommandLog = dcDiagMode;
-                s1Toggled = true;
-            }
-        } else {
-            s1HoldStart = 0;
-        }
+    if (inputMode == INPUT_MODE_DREAMCAST && dcDriver && dcDriver->enableDiagnostics) {
+        auto* dc = dcDriver;
+        char buf[64];
 
-        if (dcDiagMode) {
-            auto* dc = dcDriver;
-            char buf[64];
+        snprintf(buf, sizeof(buf), "Rx:%lu Tx:%lu XF:%lu",
+                 (unsigned long)dc->debugRxCount,
+                 (unsigned long)dc->debugTxCount,
+                 (unsigned long)dc->debugXorFail);
+        getRenderer()->drawText(0, 0, std::string(buf));
 
-            snprintf(buf, sizeof(buf), "Rx:%lu Tx:%lu XF:%lu",
-                     (unsigned long)dc->debugRxCount,
-                     (unsigned long)dc->debugTxCount,
-                     (unsigned long)dc->debugXorFail);
-            getRenderer()->drawText(0, 0, std::string(buf));
+        snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu fw:%lu",
+                 (unsigned long)dc->vmu.debugVmuReadOkCount,
+                 (unsigned long)dc->vmu.debugVmuReadErrCount,
+                 (unsigned long)dc->vmu.debugVmuFlashCount);
+        getRenderer()->drawText(0, 1, std::string(buf));
 
-            snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu fw:%lu",
-                     (unsigned long)dc->vmu.debugVmuReadOkCount,
-                     (unsigned long)dc->vmu.debugVmuReadErrCount,
-                     (unsigned long)dc->vmu.debugVmuFlashCount);
-            getRenderer()->drawText(0, 1, std::string(buf));
+        snprintf(buf, sizeof(buf), "Vr:%lu Vt:%lu",
+                 (unsigned long)dc->vmu.debugVmuRxCount,
+                 (unsigned long)dc->vmu.debugVmuTxCount);
+        getRenderer()->drawText(0, 2, std::string(buf));
 
-            snprintf(buf, sizeof(buf), "Vr:%lu Vt:%lu",
-                     (unsigned long)dc->vmu.debugVmuRxCount,
-                     (unsigned long)dc->vmu.debugVmuTxCount);
-            getRenderer()->drawText(0, 2, std::string(buf));
-
-            getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
-            return;
-        }
+        getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
+        return;
     }
 
     // Standard display path — identical for ALL input modes including Dreamcast

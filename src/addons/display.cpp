@@ -74,7 +74,10 @@ void DisplayAddon::setup() {
 
     // set current display mode
     if (!configMode) {
-        if (Storage::getInstance().getDisplayOptions().splashMode != static_cast<SplashMode>(SPLASH_MODE_NONE)) {
+        if (inputMode == INPUT_MODE_DREAMCAST) {
+            // DC mode: skip splash, go straight to button layout
+            currDisplayMode = DisplayMode::BUTTONS;
+        } else if (Storage::getInstance().getDisplayOptions().splashMode != static_cast<SplashMode>(SPLASH_MODE_NONE)) {
             currDisplayMode = DisplayMode::SPLASH;
         } else {
             currDisplayMode = DisplayMode::BUTTONS;
@@ -205,19 +208,41 @@ void DisplayAddon::process() {
         return;
     }
 
-    // Dreamcast mode: only redraw on VMU activity, diagnostic mode, or first boot.
-    // OLED retains last image — zero CPU overhead during gameplay.
+    // Dreamcast mode: draw status once on boot, then idle entirely.
+    // Redraws only on VMU activity or diagnostic mode.
     if (inputMode == INPUT_MODE_DREAMCAST) {
         DreamcastDriver* dc = DriverManager::getInstance().getDCDriver();
-        if (dc && !dc->enableDiagnostics) {
-            static uint32_t dcLastFlashCount = 0xFFFFFFFF;  // force initial draw
-            static bool dcInitialDrawDone = false;
-            uint32_t currentFlash = dc->vmu.debugVmuFlashCount;
-            if (dcInitialDrawDone && currentFlash == dcLastFlashCount) {
-                return;  // No VMU activity — skip draw entirely
+        if (dc) {
+            static bool dcDrawDone = false;
+            static uint32_t dcLastFlashCount = 0xFFFFFFFF;
+
+            // S1 (Select) hold for 3 seconds toggles diagnostic mode
+            static uint64_t s1HoldStart = 0;
+            static bool s1Toggled = false;
+            Gamepad* gp = Storage::getInstance().GetGamepad();
+            bool s1Held = (gp->state.buttons & GAMEPAD_MASK_S1) != 0;
+            if (s1Held) {
+                if (s1HoldStart == 0) {
+                    s1HoldStart = time_us_64();
+                    s1Toggled = false;
+                } else if (!s1Toggled && (time_us_64() - s1HoldStart) >= 3000000) {
+                    dc->enableDiagnostics = !dc->enableDiagnostics;
+                    dc->vmu.enableCommandLog = dc->enableDiagnostics;
+                    if (!dc->enableDiagnostics) dcDrawDone = false;  // force redraw of status bar
+                    s1Toggled = true;
+                }
+            } else {
+                s1HoldStart = 0;
             }
-            dcLastFlashCount = currentFlash;
-            dcInitialDrawDone = true;
+
+            if (!dc->enableDiagnostics) {
+                uint32_t currentFlash = dc->vmu.debugVmuFlashCount;
+                if (dcDrawDone && currentFlash == dcLastFlashCount) {
+                    return;  // Idle — skip draw entirely
+                }
+                dcLastFlashCount = currentFlash;
+                dcDrawDone = true;
+            }
         }
     }
 
