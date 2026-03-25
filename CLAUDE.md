@@ -5,7 +5,7 @@
 A fork of GP2040-CE v0.7.12 that adds **NOBD (No OBD)** — a firmware-level sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for fighting game players who need reliable dashes, throw techs, and multi-button inputs without resorting to OBD (One Button Dash) macros.
 
 **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
-**Current release:** v0.7.12-nobd-4
+**Current release:** v0.7.12-nobd-18
 **Boards:** RP2040AdvancedBreakoutBoard, Pico, PicoW, Pico2
 
 For anything not NOBD-specific (pin mapping, addons, SOCD, display, USB modes, etc.), refer to the upstream GP2040-CE docs: https://gp2040-ce.info/
