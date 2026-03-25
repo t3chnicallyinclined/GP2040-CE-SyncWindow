@@ -32,6 +32,7 @@ void __no_inline_not_in_flash_func(DreamcastVMU::logCommand)(uint8_t cmd, uint8_
                                uint32_t locWord, uint16_t blockNum, uint8_t phase,
                                uint8_t pWords, const uint8_t* rawPayload,
                                uint rawPayloadLen) {
+    if (!enableCommandLog) return;
     VmuLogEntry& e = cmdLog[cmdLogWriteIdx];
     e.timestamp_us = (uint32_t)time_us_64();
     e.cmd = cmd;
@@ -631,7 +632,7 @@ void __no_inline_not_in_flash_func(DreamcastVMU::sendFileErrorResponse)(uint32_t
     pkt[1] = maple_make_header(1, origin, dest, MAPLE_CMD_RESPOND_FILE_ERROR);
     pkt[2] = maple_host_to_wire(errorCode);
 
-    debugVmuLastError = errorCode;
+    if (enableCommandLog) debugVmuLastError = errorCode;
 
     pkt[3] = MapleBus::calcCRC(&pkt[1], 2);  // header + 1 payload word
     bus.sendPacket(pkt, 4);
@@ -646,8 +647,8 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
     uint32_t hdrWord = ((const uint32_t*)packet)[0];
     int8_t cmd = maple_hdr_command(hdrWord);
 
-    debugVmuRxCount++;
-    debugVmuLastCmd = cmd;
+    const bool diag = enableCommandLog;
+    if (diag) { debugVmuRxCount++; debugVmuLastCmd = cmd; }
 
     // Payload starts after the 4-byte header word.
     // All payload words are in wire (network) byte order.
@@ -661,7 +662,7 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
         case MAPLE_CMD_ALL_STATUS_REQUEST:
             logCommand(cmd, MAPLE_CMD_RESPOND_DEVICE_STATUS, 0, 0, 0xFFFF, 0xFF, payloadWords);
             sendInfoResponse(port, bus);
-            debugVmuTxCount++;
+            if (diag) debugVmuTxCount++;
             return true;
 
         case MAPLE_CMD_RESET_DEVICE:
@@ -670,21 +671,21 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             writePhaseMask = 0;
             logCommand(cmd, MAPLE_CMD_RESPOND_ACK, 0, 0, 0xFFFF, 0xFF, payloadWords);
             sendAckResponse(port, bus);
-            debugVmuTxCount++;
+            if (diag) debugVmuTxCount++;
             return true;
 
         case MAPLE_CMD_GET_MEDIA_INFO: {
             uint32_t fc = (payloadWords >= 1) ? payload[0] : 0;
-            if (payloadWords >= 1) debugVmuLastFuncCode = fc;
+            if (diag) { if (payloadWords >= 1) debugVmuLastFuncCode = fc; }
             if (payloadWords < 1 || fc != MAPLE_FUNC_MEMORY_CARD_WIRE) {
                 logCommand(0x0A, MAPLE_CMD_RESPOND_FILE_ERROR, fc, 0, 0xFFFF, 0xFF, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000001, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
             logCommand(0x0A, MAPLE_CMD_RESPOND_DATA_XFER, fc, 0, 0xFFFF, 0xFF, payloadWords, rawPayload, rawPayloadLen);
             sendMemoryInfoResponse(port, bus);
-            debugVmuTxCount++;
+            if (diag) debugVmuTxCount++;
             return true;
         }
 
@@ -692,14 +693,14 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             uint32_t fc = (payloadWords >= 1) ? payload[0] : 0;
             uint32_t lw = (payloadWords >= 2) ? payload[1] : 0;
             if (payloadWords >= 1) {
-                debugVmuLastFuncCode = fc;
-                debugVmuRawPayload0 = fc;
+                if (diag) debugVmuLastFuncCode = fc;
+                if (diag) debugVmuRawPayload0 = fc;
             }
-            if (payloadWords >= 2) debugVmuLastLocWord = lw;
+            if (diag) { if (payloadWords >= 2) debugVmuLastLocWord = lw; }
             if (payloadWords < 2 || fc != MAPLE_FUNC_MEMORY_CARD_WIRE) {
                 logCommand(0x0B, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, 0xFFFF, 0xFF, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000001, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -712,32 +713,32 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             uint8_t phase = (lwHost >> 16) & 0xFF;
 
             if (blockNum >= VMU_NUM_BLOCKS || phase != 0) {
-                debugVmuReadErrCount++;
-                debugVmuLastBlockErr = blockNum;
+                if (diag) debugVmuReadErrCount++;
+                if (diag) debugVmuLastBlockErr = blockNum;
                 logCommand(0x0B, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
-            debugVmuReadOkCount++;
-            debugVmuLastBlockOk = blockNum;
+            if (diag) debugVmuReadOkCount++;
+            if (diag) debugVmuLastBlockOk = blockNum;
             logCommand(0x0B, MAPLE_CMD_RESPOND_DATA_XFER, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
             // Echo raw wire-order location word — the DC expects its own value back unchanged.
             sendBlockReadResponse(blockNum, lw, port, bus);
-            debugVmuTxCount++;
+            if (diag) debugVmuTxCount++;
             return true;
         }
 
         case MAPLE_CMD_BLOCK_WRITE: {
             uint32_t fc = (payloadWords >= 1) ? payload[0] : 0;
             uint32_t lw = (payloadWords >= 2) ? payload[1] : 0;
-            if (payloadWords >= 1) debugVmuLastFuncCode = fc;
-            if (payloadWords >= 2) debugVmuLastLocWord = lw;
+            if (diag) { if (payloadWords >= 1) debugVmuLastFuncCode = fc; }
+            if (diag) { if (payloadWords >= 2) debugVmuLastLocWord = lw; }
             if (payloadWords < 2 || fc != MAPLE_FUNC_MEMORY_CARD_WIRE) {
                 logCommand(0x0C, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, 0xFFFF, 0xFF, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000001, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -749,7 +750,7 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             if (blockNum >= VMU_NUM_BLOCKS || phase >= VMU_WRITES_PER_BLOCK) {
                 logCommand(0x0C, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -757,7 +758,7 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             if (payloadWords < 2 + expectedDataWords) {
                 logCommand(0x0C, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -770,7 +771,7 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
                 writePhaseMask = 0;
                 logCommand(0x0C, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -782,20 +783,20 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
 
             logCommand(0x0C, MAPLE_CMD_RESPOND_ACK, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
             sendAckResponse(port, bus);
-            debugVmuTxCount++;
-            debugVmuWriteCount++;
+            if (diag) debugVmuTxCount++;
+            if (diag) debugVmuWriteCount++;
             return true;
         }
 
         case MAPLE_CMD_BLOCK_COMPLETE_WRITE: {
             uint32_t fc = (payloadWords >= 1) ? payload[0] : 0;
             uint32_t lw = (payloadWords >= 2) ? payload[1] : 0;
-            if (payloadWords >= 1) debugVmuLastFuncCode = fc;
-            if (payloadWords >= 2) debugVmuLastLocWord = lw;
+            if (diag) { if (payloadWords >= 1) debugVmuLastFuncCode = fc; }
+            if (diag) { if (payloadWords >= 2) debugVmuLastLocWord = lw; }
             if (payloadWords < 2 || fc != MAPLE_FUNC_MEMORY_CARD_WIRE) {
                 logCommand(0x0D, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, 0xFFFF, 0xFF, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000001, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
@@ -807,14 +808,14 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
             if (blockNum >= VMU_NUM_BLOCKS || phase != VMU_WRITES_PER_BLOCK) {
                 logCommand(0x0D, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 return true;
             }
 
             if (blockNum != currentWriteBlock || writePhaseMask != 0x0F) {
                 logCommand(0x0D, MAPLE_CMD_RESPOND_FILE_ERROR, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
                 sendFileErrorResponse(0x00000010, port, bus);
-                debugVmuTxCount++;
+                if (diag) debugVmuTxCount++;
                 currentWriteBlock = 0xFFFF;
                 writePhaseMask = 0;
                 return true;
@@ -837,7 +838,7 @@ bool __no_inline_not_in_flash_func(DreamcastVMU::handleCommand)(const uint8_t* p
 
             logCommand(0x0D, MAPLE_CMD_RESPOND_ACK, fc, lw, blockNum, phase, payloadWords, rawPayload, rawPayloadLen);
             sendAckResponse(port, bus);
-            debugVmuTxCount++;
+            if (diag) debugVmuTxCount++;
 
             // Stage write for Core 1, then spin in RAM until Core 1 finishes.
             // Core 0 must not execute flash-resident code while Core 1 has XIP disabled

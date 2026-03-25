@@ -26,8 +26,7 @@ void ButtonLayoutScreen::init() {
     setViewport((isInputHistoryEnabled ? 8 : 0), 0, (isInputHistoryEnabled ? 56 : getRenderer()->getDriver()->getMetrics()->height), getRenderer()->getDriver()->getMetrics()->width);
 
 	// load layout (drawElement pushes element to the display list)
-    // Skip widget loading in Dreamcast debug mode — we use the full display for debug text
-    if (inputMode != INPUT_MODE_DREAMCAST) {
+    {
         uint16_t elementCtr = 0;
         LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
         LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
@@ -211,9 +210,31 @@ void ButtonLayoutScreen::generateHeader() {
             case INPUT_MODE_DREAMCAST: {
                 DreamcastDriver* dc = DriverManager::getInstance().getDCDriver();
                 if (dc) {
-                    statusBar += "DC Rx:" + std::to_string(dc->debugRxCount);
+                    // Cache VMU block count — only recalc on flash write
+                    static int vmuUsedBlocks = 0;
+                    static uint32_t vmuLastFlashCount = 0xFFFFFFFF;
+                    if (!dc->disableVMU && dc->vmu.debugVmuFlashCount != vmuLastFlashCount) {
+                        vmuLastFlashCount = dc->vmu.debugVmuFlashCount;
+                        vmuUsedBlocks = 0;
+                        const uint8_t* fatRaw = dc->vmu.getRawPointer() + VMU_FAT_BLOCK_NO * VMU_BYTES_PER_BLOCK;
+                        const uint32_t* fatWords = (const uint32_t*)fatRaw;
+                        for (int i = 0; i < 100; i++) {
+                            uint32_t fw = fatWords[i];
+                            uint16_t a = (uint16_t)(((fw >> 8) & 0xFF) << 8 | (fw & 0xFF));
+                            uint16_t b = (uint16_t)(((fw >> 24) & 0xFF) << 8 | ((fw >> 16) & 0xFF));
+                            if (a != 0xFFFC) vmuUsedBlocks++;
+                            if (b != 0xFFFC) vmuUsedBlocks++;
+                        }
+                    }
+                    char dcBuf[24];
+                    if (dc->disableVMU) {
+                        snprintf(dcBuf, sizeof(dcBuf), "DC VMU:OFF");
+                    } else {
+                        snprintf(dcBuf, sizeof(dcBuf), "DC VMU:%d/%d", vmuUsedBlocks, 200);
+                    }
+                    statusBar += dcBuf;
                 } else {
-                    statusBar += "DC-NOINIT";
+                    statusBar += "DC";
                 }
                 break;
             }
@@ -273,93 +294,54 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
-    // Dreamcast debug: take over entire display
-    DreamcastDriver* dcDbg = DriverManager::getInstance().getDCDriver();
-    if (inputMode == INPUT_MODE_DREAMCAST && dcDbg) {
-        auto* dc = dcDbg;
-
-        // Line 0: Rx/Tx counts and XOR failures
-        std::string line0 = "Rx:" + std::to_string(dc->debugRxCount);
-        line0 += " Tx:" + std::to_string(dc->debugTxCount);
-        line0 += " XF:" + std::to_string(dc->debugXorFail);
-
-        // Line 1: Per-command breakdown (what is DC sending us?)
-        std::string line1 = "c1:" + std::to_string(dc->debugCmd1Count);
-        line1 += " c2:" + std::to_string(dc->debugCmd2Count);
-        line1 += " c9:" + std::to_string(dc->debugCmd9Count);
-
-        // Line 2: VMU diagnostics — V:1/0=enabled/disabled, Vr=rx, Vt=tx, Vc=last cmd, Ve=last error
-        char vmuBuf[64];
-        snprintf(vmuBuf, sizeof(vmuBuf), "V:%d Vr:%lu Vt:%lu Vc:%d",
-                 dc->disableVMU ? 0 : 1,
-                 (unsigned long)dc->vmu.debugVmuRxCount,
-                 (unsigned long)dc->vmu.debugVmuTxCount,
-                 (int)dc->vmu.debugVmuLastCmd);
-        std::string line2 = vmuBuf;
-
-        // Lines 3-5: Find the most recent BLOCK_READ (0x0B) log entry
-        // and show its raw bytes so we can see exact byte alignment
-        std::string line3 = "", line4 = "", line5 = "";
-        {
-            char logBuf[64];
-            uint16_t total = dc->vmu.cmdLogCount;
-            uint16_t wIdx = dc->vmu.cmdLogWriteIdx;
-            int avail = (total < VMU_LOG_MAX_ENTRIES) ? total : VMU_LOG_MAX_ENTRIES;
-
-            // Find most recent FAILED BLOCK_READ (response=FILE_ERROR) and most recent OK one
-            int failIdx = -1, okIdx = -1;
-            for (int i = avail - 1; i >= 0; i--) {
-                int idx = (wIdx - avail + i + VMU_LOG_MAX_ENTRIES) % VMU_LOG_MAX_ENTRIES;
-                if (dc->vmu.cmdLog[idx].cmd == 0x0B) {
-                    if (failIdx < 0 && dc->vmu.cmdLog[idx].response == (uint8_t)MAPLE_CMD_RESPOND_FILE_ERROR)
-                        failIdx = idx;
-                    if (okIdx < 0 && dc->vmu.cmdLog[idx].response == (uint8_t)MAPLE_CMD_RESPOND_DATA_XFER)
-                        okIdx = idx;
-                }
-                if (failIdx >= 0 && okIdx >= 0) break;
+    // Dreamcast diagnostic mode — S1 (Select) toggles, takes over full display
+    DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
+    if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
+        static bool dcDiagMode = false;
+        static uint64_t s1HoldStart = 0;
+        static bool s1Toggled = false;  // prevent repeated toggles while held
+        bool s1Held = (getGamepad()->state.buttons & GAMEPAD_MASK_S1) != 0;
+        if (s1Held) {
+            if (s1HoldStart == 0) {
+                s1HoldStart = time_us_64();
+                s1Toggled = false;
+            } else if (!s1Toggled && (time_us_64() - s1HoldStart) >= 3000000) {  // 3 seconds
+                dcDiagMode = !dcDiagMode;
+                dcDriver->enableDiagnostics = dcDiagMode;
+                dcDriver->vmu.enableCommandLog = dcDiagMode;
+                s1Toggled = true;
             }
-            int foundIdx = (failIdx >= 0) ? failIdx : okIdx;
-
-            // Line 3: FAIL — hdr[4] + payload[8] = 12 bytes
-            // Format: "F H:XXXXXXXX XXXXXXXX" = header then locWord (skip funcCode)
-            // rawBytes[0..3]=header, [4..7]=funcCode, [8..11]=locWord
-            if (failIdx >= 0) {
-                const VmuLogEntry& ef = dc->vmu.cmdLog[failIdx];
-                snprintf(logBuf, sizeof(logBuf), "F%02X%02X%02X%02X %02X%02X%02X%02X",
-                         ef.rawBytes[0], ef.rawBytes[1], ef.rawBytes[2], ef.rawBytes[3],
-                         ef.rawBytes[8], ef.rawBytes[9], ef.rawBytes[10], ef.rawBytes[11]);
-                line3 = logBuf;
-            } else {
-                line3 = "F: none";
-            }
-            // Line 4: OK — same format
-            if (okIdx >= 0) {
-                const VmuLogEntry& eo = dc->vmu.cmdLog[okIdx];
-                snprintf(logBuf, sizeof(logBuf), "O%02X%02X%02X%02X %02X%02X%02X%02X",
-                         eo.rawBytes[0], eo.rawBytes[1], eo.rawBytes[2], eo.rawBytes[3],
-                         eo.rawBytes[8], eo.rawBytes[9], eo.rawBytes[10], eo.rawBytes[11]);
-                line4 = logBuf;
-            } else {
-                line4 = "O: none";
-            }
-            // Line 5: counts + flash write status
-            snprintf(logBuf, sizeof(logBuf), "ok%lu er%lu fw%lu fb%u",
-                     (unsigned long)dc->vmu.debugVmuReadOkCount,
-                     (unsigned long)dc->vmu.debugVmuReadErrCount,
-                     (unsigned long)dc->vmu.debugVmuFlashCount,
-                     (unsigned)dc->vmu.debugVmuLastFlashBlock);
-            line5 = logBuf;
+        } else {
+            s1HoldStart = 0;
         }
 
-        getRenderer()->drawText(0, 0, line0);
-        getRenderer()->drawText(0, 1, line1);
-        getRenderer()->drawText(0, 2, line2);
-        getRenderer()->drawText(0, 3, line3);
-        getRenderer()->drawText(0, 4, line4);
-        getRenderer()->drawText(0, 5, line5);
-        return;
+        if (dcDiagMode) {
+            auto* dc = dcDriver;
+            char buf[64];
+
+            snprintf(buf, sizeof(buf), "Rx:%lu Tx:%lu XF:%lu",
+                     (unsigned long)dc->debugRxCount,
+                     (unsigned long)dc->debugTxCount,
+                     (unsigned long)dc->debugXorFail);
+            getRenderer()->drawText(0, 0, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu fw:%lu",
+                     (unsigned long)dc->vmu.debugVmuReadOkCount,
+                     (unsigned long)dc->vmu.debugVmuReadErrCount,
+                     (unsigned long)dc->vmu.debugVmuFlashCount);
+            getRenderer()->drawText(0, 1, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "Vr:%lu Vt:%lu",
+                     (unsigned long)dc->vmu.debugVmuRxCount,
+                     (unsigned long)dc->vmu.debugVmuTxCount);
+            getRenderer()->drawText(0, 2, std::string(buf));
+
+            getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
+            return;
+        }
     }
 
+    // Standard display — DC uses the same layout as all other input modes
     if (bannerDisplay) {
         getRenderer()->drawRectangle(0, 0, 128, 7, true, true);
     	getRenderer()->drawText(0, 0, statusBar, true);

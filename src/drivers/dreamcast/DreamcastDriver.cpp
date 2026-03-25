@@ -41,7 +41,7 @@ static void buildDevInfoString(uint32_t* dest, const char* str, uint maxLen) {
 }
 
 DreamcastDriver::DreamcastDriver()
-    : connected(false), lastPort(0), lastProcessUs(0) {
+    : connected(false), lastPort(0) {
 }
 
 bool DreamcastDriver::init(uint pin_a, uint pin_b) {
@@ -50,7 +50,7 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
     // Load config from storage
     const GamepadOptions& options = Storage::getInstance().getGamepadOptions();
     disableVMU = options.disableVMU;
-    dcSyncMode = options.dcSyncMode;
+    // dcSyncMode removed — raw passthrough is always used (matches real DC controller)
 
     buildInfoPacket();
     buildControllerPacket();
@@ -276,46 +276,13 @@ uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t
     return dc;
 }
 
-void __no_inline_not_in_flash_func(DreamcastDriver::accumulate)(Gamepad* gamepad) {
-    // Latch button presses between DC polls so brief taps aren't missed
-    accumButtons |= gamepad->state.buttons;
-    accumDpad    |= gamepad->state.dpad;
-
-    // Track max trigger values (highest press wins)
-    uint8_t lt = gamepad->state.lt;
-    uint8_t rt = gamepad->state.rt;
-    if (lt == 0 && (gamepad->state.buttons & GAMEPAD_MASK_L2)) lt = 255;
-    if (rt == 0 && (gamepad->state.buttons & GAMEPAD_MASK_R2)) rt = 255;
-    if (lt > accumLt) accumLt = lt;
-    if (rt > accumRt) accumRt = rt;
-}
-
 void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad* gamepad) {
-    uint32_t buttons;
-    uint8_t  dpad;
-    uint8_t  lt, rt;
-
-    if (dcSyncMode == DC_SYNC_ACCUMULATE) {
-        // Include current frame's state in accumulation before sending
-        accumulate(gamepad);
-        buttons = accumButtons;
-        dpad    = accumDpad;
-        lt      = accumLt;
-        rt      = accumRt;
-        // Reset accumulators for next inter-poll period
-        accumButtons = 0;
-        accumDpad    = 0;
-        accumLt      = 0;
-        accumRt      = 0;
-    } else {
-        // DC_SYNC_OFF: raw snapshot
-        buttons = gamepad->state.buttons;
-        dpad    = gamepad->state.dpad;
-        lt      = gamepad->state.lt;
-        rt      = gamepad->state.rt;
-        if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
-        if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
-    }
+    uint32_t buttons = gamepad->state.buttons;
+    uint8_t  dpad    = gamepad->state.dpad;
+    uint8_t  lt      = gamepad->state.lt;
+    uint8_t  rt      = gamepad->state.rt;
+    if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
+    if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
 
     uint16_t dcButtons = mapButtonsToDC(buttons, dpad);
 
@@ -344,10 +311,6 @@ void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad
     // bits[31:24]=joyY2, [23:16]=joyX2, [15:8]=joyY, [7:0]=joyX
     controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
                            | ((uint32_t)jy << 8) | jx;
-
-    debugDcButtons = dcButtons;
-    debugGpButtons = gamepad->state.buttons;
-    debugGpDpad = gamepad->state.dpad;
 
     // Recalculate CRC over header + 3 payload words
     controllerPacketBuf[5] = MapleBus::calcCRC(&controllerPacketBuf[1], 4);
@@ -420,31 +383,10 @@ void __no_inline_not_in_flash_func(DreamcastDriver::waitTxFlushRx)() {
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
-    uint64_t nowUs = time_us_64();
+    const bool diag = enableDiagnostics;
+    bus.enableDiagnostics = diag;
 
-    // Loop timing diagnostic: track max time between process() calls
-    if (lastProcessUs > 0) {
-        uint32_t deltaUs = (uint32_t)(nowUs - lastProcessUs);
-        if (deltaUs > debugLoopMaxUs) {
-            debugLoopMaxUs = deltaUs;
-        }
-        // Reset max every ~1 second so it shows current worst-case, not all-time
-        if ((nowUs - debugLoopLastResetUs) > 1000000) {
-            debugLoopMaxUs = deltaUs;
-            debugLoopLastResetUs = nowUs;
-        }
-    } else {
-        debugLoopLastResetUs = nowUs;
-    }
-    lastProcessUs = nowUs;
-
-    // Copy XOR fail counter from bus layer
-    debugXorFail = bus.debugXorFail;
-
-    // Accumulate mode — reserved for future use.
-    if (dcSyncMode == DC_SYNC_ACCUMULATE) {
-        accumulate(gamepad);
-    }
+    if (diag) debugXorFail = bus.debugXorFail;
 
     // Poll for decoded packets (all data in wire/network byte order)
     const uint8_t* packet = nullptr;
@@ -452,28 +394,19 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
     bool gotPacket = bus.pollReceive(&packet, &rxLen);
 
     if (!gotPacket && bus.wasLastRxCorrupt()) {
-        // Packet arrived but was structurally corrupt (CRC fail or numWords mismatch).
-        // Ask the DC to retransmit using Maple protocol command -4.
         sendResendRequest();
         waitTxFlushRx();
-        debugResendCount++;
+        if (diag) debugResendCount++;
         return;
     }
 
-    if (gotPacket && rxLen >= 4) {  // At least 1 word (header)
-        // Parse header from wire-order word
+    if (gotPacket && rxLen >= 4) {
         uint32_t hdrWord = ((const uint32_t*)packet)[0];
         int8_t cmd = maple_hdr_command(hdrWord);
         uint8_t destAddr = maple_hdr_dest(hdrWord) & MAPLE_PERIPH_MASK;
-        debugLastDest = destAddr;
-
-        // Extract port from sender address
         lastPort = maple_hdr_origin(hdrWord) & MAPLE_PORT_MASK;
 
-        // Route to VMU sub-peripheral if addressed to 0x01
-        // Gate on vmuReady: skip VMU commands until we've completed at least
-        // one successful controller DEVICE_REQUEST exchange, confirming the
-        // RX decoder is byte-aligned.
+        // Route to VMU sub-peripheral
         if (!disableVMU && destAddr == MAPLE_SUB0_ADDR) {
             if (!vmuReady) return;
             if (vmu.handleCommand(packet, rxLen, lastPort, bus)) {
@@ -482,75 +415,55 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
             return;
         }
 
-        // Ignore commands to other sub-peripheral addresses (0x02, etc.)
-        if (destAddr != MAPLE_CTRL_ADDR) {
-            debugFilteredCount++;
-            return;
-        }
+        if (destAddr != MAPLE_CTRL_ADDR) return;
 
-        debugRxCount++;
-        debugLastRxCmd = cmd;
-
-        // Track command types for diagnostics
-        switch (cmd) {
-            case MAPLE_CMD_DEVICE_REQUEST:     debugCmd1Count++; break;
-            case MAPLE_CMD_ALL_STATUS_REQUEST: debugCmd2Count++; break;
-            case MAPLE_CMD_RESET_DEVICE:       debugCmd3Count++; break;
-            case MAPLE_CMD_GET_CONDITION:       debugCmd9Count++; break;
-            default:                           debugCmdOtherCount++; break;
-        }
+        if (diag) debugRxCount++;
 
         switch (cmd) {
             case MAPLE_CMD_DEVICE_REQUEST:
-                // CMD 1: respond with device info (cmd 5, 28 words)
-                if (debugConsecutivePolls > debugMaxConsecutivePolls) {
-                    debugMaxConsecutivePolls = debugConsecutivePolls;
+                if (diag) {
+                    debugCmd1Count++;
+                    if (debugConsecutivePolls > debugMaxConsecutivePolls)
+                        debugMaxConsecutivePolls = debugConsecutivePolls;
+                    debugConsecutivePolls = 0;
                 }
-                debugConsecutivePolls = 0;
                 sendInfoResponse();
                 waitTxFlushRx();
-                debugTxCount++;
-                // Successful controller exchange confirms RX decoder is aligned.
+                if (diag) debugTxCount++;
                 vmuReady = true;
                 break;
 
             case MAPLE_CMD_ALL_STATUS_REQUEST:
-                // CMD 2: respond with extended device info (cmd 6, 48 words)
                 sendExtInfoResponse();
                 waitTxFlushRx();
-                debugTxCount++;
+                if (diag) debugTxCount++;
                 break;
 
             case MAPLE_CMD_GET_CONDITION:
-                // CMD 9: respond with current controller state immediately
-                debugConsecutivePolls++;
+                if (diag) { debugCmd9Count++; debugConsecutivePolls++; }
                 sendControllerState(gamepad);
                 waitTxFlushRx();
-                debugTxCount++;
+                if (diag) debugTxCount++;
                 break;
 
             case MAPLE_CMD_RESET_DEVICE:
             case MAPLE_CMD_SHUTDOWN_DEVICE:
-                // DC sends RESET to recover from errors, SHUTDOWN before power-off.
                 sendACKResponse();
                 waitTxFlushRx();
-                debugTxCount++;
+                if (diag) debugTxCount++;
                 break;
 
             case MAPLE_CMD_SET_CONDITION:
-                // Rumble/vibration — ACK to keep DC happy
                 sendACKResponse();
                 waitTxFlushRx();
-                debugTxCount++;
+                if (diag) debugTxCount++;
                 break;
 
             default:
-                // Unknown command — respond with UNKNOWN_COMMAND (matches MaplePad)
                 sendUnknownCommandResponse();
                 waitTxFlushRx();
-                debugTxCount++;
+                if (diag) debugTxCount++;
                 break;
         }
     }
-
 }

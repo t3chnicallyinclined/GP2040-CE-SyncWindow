@@ -136,7 +136,7 @@ void __no_inline_not_in_flash_func(MapleBus::sendPacket)(const uint32_t* words, 
             }
         }
         if (!busIdle) {
-            debugBusStuckCount++;
+            if (enableDiagnostics) debugBusStuckCount++;
             // Re-enable RX SM since we're aborting TX
             startRx();
             return;
@@ -160,7 +160,7 @@ void __no_inline_not_in_flash_func(MapleBus::flushRx)() {
     while (dma_channel_is_busy(txDmaChannel)) {
         if (time_us_64() >= deadline) {
             dma_channel_abort(txDmaChannel);
-            debugTxTimeout++;
+            if (enableDiagnostics) debugTxTimeout++;
             break;
         }
         tight_loop_contents();
@@ -177,7 +177,7 @@ void __no_inline_not_in_flash_func(MapleBus::flushRx)() {
             pio_sm_restart(txPio, txSm);
             pio_sm_exec(txPio, txSm, pio_encode_jmp(txSmOffset));
             pio_sm_set_enabled(txPio, txSm, true);
-            debugTxTimeout++;
+            if (enableDiagnostics) debugTxTimeout++;
             break;
         }
         tight_loop_contents();
@@ -206,7 +206,7 @@ bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPac
     bool endOfPacket = (rxPio->irq & (1u << rxSm)) != 0;
 
     if (endOfPacket) {
-        debugEndIrqCount++;
+        if (enableDiagnostics) debugEndIrqCount++;
 
         // Wait up to 1ms for DMA to fully drain the RX FIFO.
         // Critical: we must NOT read transfer_count while DMA is still active —
@@ -260,7 +260,7 @@ bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPac
                     memcpy(rxPacketBuf, rxDmaBuf, dataWords * sizeof(uint32_t));
                     *outPacket = (const uint8_t*)rxPacketBuf;
                     *outLength = dataWords * sizeof(uint32_t);
-                    debugPollTrue++;
+                    if (enableDiagnostics) debugPollTrue++;
 
                     // Stop the SM so it can't capture new data into the DMA buffer.
                     // Caller will call flushRx() after sending response, which restarts RX.
@@ -268,12 +268,12 @@ bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPac
                     pio_interrupt_clear(rxPio, rxSm);
                     return true;
                 } else {
-                    debugXorFail++;
+                    if (enableDiagnostics) debugXorFail++;
                     lastRxWasCorrupt = true;
                 }
             } else {
                 // Not enough words received vs what header declared
-                debugNumWordsMismatch++;
+                if (enableDiagnostics) debugNumWordsMismatch++;
                 lastRxWasCorrupt = true;
             }
         }
@@ -288,7 +288,7 @@ bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPac
         // Only timeout if DMA has received some data (indicating a partial packet)
         uint32_t remaining = dma_channel_hw_addr(rxDmaChannel)->transfer_count;
         if (remaining < rxDmaInitCount) {
-            debugRxTimeout++;
+            if (enableDiagnostics) debugRxTimeout++;
             startRx();
         } else {
             // No data at all — just reset the timer to avoid repeated checks

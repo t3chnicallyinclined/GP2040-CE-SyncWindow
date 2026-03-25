@@ -120,14 +120,15 @@ public:
     // Automatically clears the flag after reading.
     bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
 
-    // Debug counters
-    uint32_t debugXorFail = 0;       // Times CRC check failed
-    uint32_t debugPollTrue = 0;      // Times pollReceive returned true
-    uint32_t debugTxTimeout = 0;     // Times flushRx() timed out waiting for TX completion
-    uint32_t debugBusStuckCount = 0; // Times sendPacket() aborted due to bus stuck low
-    uint32_t debugRxTimeout = 0;     // Times RX timed out waiting for end-of-packet
-    uint32_t debugEndIrqCount = 0;   // Times end-of-packet IRQ detected
-    uint32_t debugNumWordsMismatch = 0; // Times numWords field didn't match received word count
+    // Debug counters (only updated when enableDiagnostics == true)
+    bool enableDiagnostics = false;
+    uint32_t debugXorFail = 0;
+    uint32_t debugPollTrue = 0;
+    uint32_t debugTxTimeout = 0;
+    uint32_t debugBusStuckCount = 0;
+    uint32_t debugRxTimeout = 0;
+    uint32_t debugEndIrqCount = 0;
+    uint32_t debugNumWordsMismatch = 0;
 
 private:
     PIO txPio;

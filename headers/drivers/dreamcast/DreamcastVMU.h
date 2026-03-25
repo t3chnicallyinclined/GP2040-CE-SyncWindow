@@ -96,6 +96,9 @@ public:
     void formatWebconfig();
     void formatWebconfig_inner();  // Called from alarm callback — do not call directly
 
+    // Enable detailed command logging (toggled by OLED diagnostic mode)
+    bool enableCommandLog = false;
+
     // Debug counters
     uint32_t debugVmuRxCount = 0;
     uint32_t debugVmuTxCount = 0;
