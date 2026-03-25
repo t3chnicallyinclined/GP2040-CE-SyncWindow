@@ -300,6 +300,7 @@ void ButtonLayoutScreen::drawScreen() {
     // Dreamcast diagnostic mode — rendered here when enableDiagnostics is on
     // (toggle is handled in display addon process(), not here)
     DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
+
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver && dcDriver->enableDiagnostics) {
         auto* dc = dcDriver;
         char buf[64];
@@ -321,6 +322,8 @@ void ButtonLayoutScreen::drawScreen() {
                  (unsigned long)dc->vmu.debugVmuTxCount);
         getRenderer()->drawText(0, 2, std::string(buf));
 
+        // Show zero latency status in diagnostics view
+        getRenderer()->drawText(0, 3, dc->zeroLatencyMode ? "ZL:ON" : "ZL:OFF");
         getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
         return;
     }
@@ -332,6 +335,18 @@ void ButtonLayoutScreen::drawScreen() {
     } else {
 		getRenderer()->drawText(0, 0, statusBar);
 	}
+
+    // Zero Latency persistent status — centered in the middle of the screen
+    if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
+        if (dcDriver->zeroLatencyMode) {
+            getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
+            getRenderer()->drawText(0, 4, "    ACTIVATED");
+        } else {
+            getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
+            getRenderer()->drawText(0, 4, "   DEACTIVATED");
+        }
+    }
+
     getRenderer()->drawText(0, 7, footer);
 }
 

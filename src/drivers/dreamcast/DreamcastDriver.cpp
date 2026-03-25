@@ -7,20 +7,6 @@
 
 // Dreamcast controller driver — wire-order architecture (NO DMA bswap).
 // Based on MaplePad by mackieks (github.com/mackieks/MaplePad).
-
-// Dreamcast button masks (inverted: 0=pressed, 1=released)
-#define DC_BTN_C      0x0001
-#define DC_BTN_B      0x0002
-#define DC_BTN_A      0x0004
-#define DC_BTN_START  0x0008
-#define DC_BTN_UP     0x0010
-#define DC_BTN_DOWN   0x0020
-#define DC_BTN_LEFT   0x0040
-#define DC_BTN_RIGHT  0x0080
-#define DC_BTN_Z      0x0100
-#define DC_BTN_Y      0x0200
-#define DC_BTN_X      0x0400
-
 // Helper: build a device info string in wire order.
 // Maple Bus sends LSByte first per word. PIO sends bits 31:24 first.
 // So the first character of the string must end up at bits [31:24] of the first word.
@@ -62,8 +48,72 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
         vmu.init();
     }
 
+    // Build GPIO→DC button mapping for zero latency mode
+    buildGpioDcMap();
+
     connected = true;
     return true;
+}
+
+void DreamcastDriver::buildGpioDcMap() {
+    // Build a direct GPIO pin → DC button mapping table so that
+    // sendControllerState() can read gpio_get_all() and map to DC format
+    // without going through the gamepad pipeline (zero staleness).
+    memset(gpioDcButtonMap, 0, sizeof(gpioDcButtonMap));
+    triggerLTMask = 0;
+    triggerRTMask = 0;
+    buttonGpioMask = 0;
+
+    Gamepad* gamepad = Storage::getInstance().GetGamepad();
+
+    // Map each gamepad button's GPIO pin to the corresponding DC button mask
+    struct { GamepadButtonMapping* mapping; uint16_t dcMask; } buttonTable[] = {
+        { gamepad->mapButtonB1, DC_BTN_A },
+        { gamepad->mapButtonB2, DC_BTN_B },
+        { gamepad->mapButtonB3, DC_BTN_X },
+        { gamepad->mapButtonB4, DC_BTN_Y },
+        { gamepad->mapButtonL1, DC_BTN_C },
+        { gamepad->mapButtonR1, DC_BTN_Z },
+        { gamepad->mapButtonS2, DC_BTN_START },
+        { gamepad->mapDpadUp,    DC_BTN_UP },
+        { gamepad->mapDpadDown,  DC_BTN_DOWN },
+        { gamepad->mapDpadLeft,  DC_BTN_LEFT },
+        { gamepad->mapDpadRight, DC_BTN_RIGHT },
+    };
+
+    for (auto& entry : buttonTable) {
+        if (entry.mapping && entry.mapping->pinMask) {
+            uint pin = __builtin_ctz(entry.mapping->pinMask);
+            gpioDcButtonMap[pin] = entry.dcMask;
+            buttonGpioMask |= (1u << pin);
+        }
+    }
+
+    // Triggers (L2 → LT, R2 → RT) — bitmask instead of per-pin array
+    if (gamepad->mapButtonL2 && gamepad->mapButtonL2->pinMask) {
+        triggerLTMask = gamepad->mapButtonL2->pinMask;
+        buttonGpioMask |= triggerLTMask;
+    }
+    if (gamepad->mapButtonR2 && gamepad->mapButtonR2->pinMask) {
+        triggerRTMask = gamepad->mapButtonR2->pinMask;
+        buttonGpioMask |= triggerRTMask;
+    }
+}
+
+uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapRawGpioToDC)(
+    uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT) {
+    uint32_t pressed = rawGpio & buttonGpioMask;
+    *outLT = (pressed & triggerLTMask) ? 255 : 0;
+    *outRT = (pressed & triggerRTMask) ? 255 : 0;
+
+    uint16_t dc = 0xFFFF;
+    uint32_t btnPressed = pressed & ~(triggerLTMask | triggerRTMask);
+    while (btnPressed) {
+        uint pin = __builtin_ctz(btnPressed);  // Find lowest set bit
+        dc &= ~gpioDcButtonMap[pin];
+        btnPressed &= btnPressed - 1;  // Clear lowest set bit (branchless)
+    }
+    return dc;
 }
 
 void DreamcastDriver::buildInfoPacket() {
@@ -277,21 +327,33 @@ uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad* gamepad) {
-    uint32_t buttons = gamepad->state.buttons;
-    uint8_t  dpad    = gamepad->state.dpad;
-    uint8_t  lt      = gamepad->state.lt;
-    uint8_t  rt      = gamepad->state.rt;
-    if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
-    if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
+    uint16_t dcButtons;
+    uint8_t lt, rt, jx, jy;
 
-    uint16_t dcButtons = mapButtonsToDC(buttons, dpad);
+    if (zeroLatencyMode) {
+        uint32_t freshGpio = ~gpio_get_all();
+        dcButtons = mapRawGpioToDC(freshGpio, &lt, &rt);
 
-    // Convert 16-bit unsigned (0-65535, mid=32767) to 8-bit unsigned (0-255, mid=128)
-    // Add 0x80 for rounding before shift, clamp to 255
-    uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-    uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-    uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-    uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
+        uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+        uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+        jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+        jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
+    } else {
+        uint32_t buttons = gamepad->state.buttons;
+        uint8_t  dpad    = gamepad->state.dpad;
+        lt = gamepad->state.lt;
+        rt = gamepad->state.rt;
+        if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
+        if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
+
+        dcButtons = mapButtonsToDC(buttons, dpad);
+
+        // Convert 16-bit unsigned (0-65535, mid=32767) to 8-bit unsigned (0-255, mid=128)
+        uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+        uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+        jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+        jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
+    }
 
     // Set port bits in header. Origin includes MAPLE_SUB0_ADDR to announce VMU sub-peripheral
     // on EVERY response, not just device info. MaplePad does: senderAddr = mAddr | mAddrAugmenter.

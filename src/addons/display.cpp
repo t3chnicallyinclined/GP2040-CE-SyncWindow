@@ -221,7 +221,29 @@ void DisplayAddon::process() {
             static bool s1Toggled = false;
             Gamepad* gp = Storage::getInstance().GetGamepad();
             bool s1Held = (gp->state.buttons & GAMEPAD_MASK_S1) != 0;
-            if (s1Held) {
+            bool s2Held = (gp->state.buttons & GAMEPAD_MASK_S2) != 0;
+
+            static uint64_t s1s2HoldStart = 0;
+            static bool s1s2Toggled = false;
+
+            if (s1Held && s2Held) {
+                if (s1s2HoldStart == 0) {
+                    s1s2HoldStart = time_us_64();
+                    s1s2Toggled = false;
+                } else if (!s1s2Toggled && (time_us_64() - s1s2HoldStart) >= 3000000) {
+                    dc->zeroLatencyMode = !dc->zeroLatencyMode;
+                    s1s2Toggled = true;
+                    dcDrawDone = false;  // force redraw
+                }
+                // Block S1-only toggle while both are held
+                s1HoldStart = 0;
+                s1Toggled = true;
+            } else {
+                s1s2HoldStart = 0;
+            }
+
+            // S1-only hold for 3 seconds toggles diagnostic mode (only if S2 not held)
+            if (s1Held && !s2Held) {
                 if (s1HoldStart == 0) {
                     s1HoldStart = time_us_64();
                     s1Toggled = false;
@@ -231,7 +253,7 @@ void DisplayAddon::process() {
                     if (!dc->enableDiagnostics) dcDrawDone = false;  // force redraw of status bar
                     s1Toggled = true;
                 }
-            } else {
+            } else if (!s1Held) {
                 s1HoldStart = 0;
             }
 

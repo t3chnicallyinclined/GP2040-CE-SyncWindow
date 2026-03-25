@@ -454,6 +454,16 @@ void GP2040::run() {
 		}
 
 		checkSaveRebootState();
+
+		if (dcMode && dcDriver->zeroLatencyMode) {
+			uint64_t nextPipeline = time_us_64() + 16000;
+			while (dcDriver->zeroLatencyMode) {
+				dcDriver->process(gamepad);
+				if (time_us_64() >= nextPipeline) {
+					break;
+				}
+			}
+		}
 	}
 }
 
