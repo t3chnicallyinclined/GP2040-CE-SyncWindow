@@ -232,6 +232,9 @@ void DisplayAddon::process() {
                 } else if (!s1s2Toggled && (time_us_64() - s1s2HoldStart) >= 3000000) {
                     dc->zeroLatencyMode = !dc->zeroLatencyMode;
                     dc->setFastPath(dc->zeroLatencyMode);
+                    // Persist to flash so it survives reboot
+                    Storage::getInstance().getGamepadOptions().zeroLatencyMode = dc->zeroLatencyMode;
+                    Storage::getInstance().save();
                     s1s2Toggled = true;
                     dcDrawDone = false;  // force redraw
                 }

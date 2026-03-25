@@ -45,6 +45,7 @@ message GamepadOptions
     optional uint32 dcSyncMode = 38;
     optional uint32 dcSyncWindow = 39;
     optional bool disableVMU = 40;
+    optional bool zeroLatencyMode = 41;
 }
 
 message KeyboardMapping

@@ -319,6 +319,7 @@ void ConfigUtils::initUnsetPropertiesWithDefaults(Config& config)
     INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinB, DEFAULT_DREAMCAST_PIN_B);
     INIT_UNSET_PROPERTY(config.gamepadOptions, dcSyncMode, 0);    // DC_SYNC_OFF (raw passthrough)
     INIT_UNSET_PROPERTY(config.gamepadOptions, disableVMU, false);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, zeroLatencyMode, false);
     INIT_UNSET_PROPERTY(config.gamepadOptions, inputModeB1, DEFAULT_INPUT_MODE_B1);
     INIT_UNSET_PROPERTY(config.gamepadOptions, inputModeB2, DEFAULT_INPUT_MODE_B2);
     INIT_UNSET_PROPERTY(config.gamepadOptions, inputModeB3, DEFAULT_INPUT_MODE_B3);

@@ -372,8 +372,6 @@ void GP2040::run() {
 	}
 
 	while (1) {
-		// ZL fast path: check if ISR has a pre-built CMD 9 response before doing anything else.
-		// This minimizes the gap between ISR firing and response being sent.
 		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
 			dcDriver->process(gamepad);
 			continue;  // Skip rest of loop — ISR already captured fresh GPIO
@@ -409,7 +407,7 @@ void GP2040::run() {
 
 		addons.PreprocessAddons();
 
-		// ZL: check between every pipeline step to minimize spike
+		// Check between pipeline steps
 		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
 			dcDriver->process(gamepad);
 		}
@@ -440,9 +438,6 @@ void GP2040::run() {
 		checkSaveRebootState();
 
 		if (dcMode && dcDriver->zeroLatencyMode) {
-			// Ultra-tight spin: bypass process() entirely.
-			// ISR already built the packet — just send it.
-			// Only check the flag + send. Zero unnecessary work.
 			uint64_t deadline = time_us_64() + 16000;
 			while (time_us_64() < deadline) {
 				if (dcDriver->bus.cmd9PreBuilt) {
@@ -453,7 +448,6 @@ void GP2040::run() {
 					deadline = time_us_64() + 16000;
 				}
 			}
-			// Update analog cache once per pipeline pass (not per spin)
 			uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
 			uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
 			dcDriver->cachedJX = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));

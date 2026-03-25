@@ -11,7 +11,7 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 
-// Forward declaration for fast-path callback type
+// Forward declaration for callback type
 class MapleBus;
 typedef void (*MapleFastPathCallback)(uint32_t hdr, MapleBus* bus);
 
@@ -121,8 +121,7 @@ public:
     PIO getTxPio() { return txPio; }
     uint getRxSm() { return rxSm; }
 
-    // Clear PIO RX state after ISR fast-path consumed the packet.
-    // Must be called before sendPacket() so flushRx() → startRx() properly restarts.
+    // Clear PIO RX state after ISR consumed the packet.
     void clearRxAfterFastPath();
 
     // Check if last pollReceive() detected a corrupt packet (CRC fail or numWords mismatch).
@@ -130,19 +129,18 @@ public:
     // Automatically clears the flag after reading.
     bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
 
-    // Level 3.5 fast-path: ISR captures GPIO + builds response, main loop sends.
     // Set by ISR when a valid CMD 9 packet is received and response is pre-built.
     volatile bool cmd9PreBuilt = false;
 
     // Packet arrival timestamp — set when end-of-packet IRQ flag is first detected.
-    // Used for apples-to-apples response time comparison between STD and ZL modes.
+    // Timestamp when end-of-packet was detected (for diagnostics).
     volatile uint32_t rxArrivalTimestamp = 0;
 
     // Fast-path callback: called from ISR to capture GPIO and build response.
     // Must be __no_inline_not_in_flash_func. Set by DreamcastDriver::init().
     MapleFastPathCallback fastPathCallback = nullptr;
 
-    // Enable/disable the PIO IRQ fast path (gated by zeroLatencyMode)
+    // Enable/disable the PIO IRQ path
     void enableFastPath(MapleFastPathCallback callback);
     void disableFastPath();
 
@@ -156,7 +154,7 @@ public:
     uint32_t debugEndIrqCount = 0;
     uint32_t debugNumWordsMismatch = 0;
 
-    // RX DMA buffer — public for ISR read access (Level 3.5 fast path).
+    // RX DMA buffer — public for ISR read access.
     // maple_rx PIO produces 32 decoded data bits per FIFO word (= 4 payload bytes).
     // NO DMA bswap — data stays in wire (network) byte order as received by PIO.
     uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));

@@ -6,13 +6,6 @@
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
 
-// ============================================================
-// Level 3.5: ISR GPIO capture callback
-// Called from mapleRxIrqHandler when a valid CMD 9 is received.
-// Reads GPIO at the freshest moment and pre-builds the response.
-// Does NOT send — main loop handles TX for sequential safety.
-// ZERO overhead when diagnostics are off (no timer reads).
-// ============================================================
 static DreamcastDriver* irqDriverInstance = nullptr;
 
 static void __no_inline_not_in_flash_func(cmd9GpioCapture)(uint32_t hdr, MapleBus* bus) {
@@ -63,6 +56,7 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
 
     const GamepadOptions& options = Storage::getInstance().getGamepadOptions();
     disableVMU = options.disableVMU;
+    zeroLatencyMode = options.zeroLatencyMode;
 
     buildInfoPacket();
     buildControllerPacket();
@@ -409,12 +403,6 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
         return;
     }
 
-    // In ZL mode, CMD 9 is handled by the ISR fast path.
-    // Only fall through to pollReceive for non-CMD-9 packets (VMU, device info).
-    // If cmd9PreBuilt was false and we're in ZL mode, the ISR hasn't fired yet —
-    // don't race it with pollReceive. Just return and let the ISR handle it next time.
-    // Exception: we still need pollReceive for CMD 1 (device info) at connection time,
-    // so only skip once vmuReady is true (meaning we've already connected).
     if (zeroLatencyMode && vmuReady) {
         return;
     }

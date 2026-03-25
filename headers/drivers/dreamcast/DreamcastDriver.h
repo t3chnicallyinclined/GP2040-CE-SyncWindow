@@ -32,7 +32,7 @@ public:
     bool zeroLatencyMode = false;
     void setFastPath(bool enable);
 
-    // Cached analog values for ISR access (ZL mode)
+    // Cached analog values for ISR access
     volatile uint8_t cachedJX = 0x80;
     volatile uint8_t cachedJY = 0x80;
 
@@ -58,7 +58,7 @@ public:
 
     DreamcastVMU vmu;
 
-    // Zero Latency: GPIO pin → DC button mapping (built at init time)
+    // GPIO pin → DC button mapping (built at init time)
     uint16_t gpioDcButtonMap[30];
     uint32_t triggerLTMask;
     uint32_t triggerRTMask;
@@ -68,7 +68,7 @@ public:
     MapleBus bus;
     uint32_t controllerPacketBuf[6];
 
-    // Public for ISR fast-path callback access
+    // Public for ISR callback access
     uint16_t mapRawGpioToDC(uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT);
 
 private:

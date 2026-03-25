@@ -7,16 +7,12 @@
 // Maple Bus transport layer — wire-order architecture (NO DMA bswap).
 // Based on MaplePad by mackieks (github.com/mackieks/MaplePad).
 
-// ============================================================
-// Level 3.5 Fast Path — ISR captures GPIO on end-of-packet
-// ============================================================
 static MapleBus* irqBusInstance = nullptr;
 
 static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
     MapleBus* bus = irqBusInstance;
     if (!bus || !bus->fastPathCallback) return;
 
-    // Timestamp packet arrival (diagnostics only — zero overhead when off)
     if (bus->enableDiagnostics) bus->rxArrivalTimestamp = timer_hw->timerawl;
 
     // Validate packet: CMD 9 is 3 words (header + funcCode + CRC)
