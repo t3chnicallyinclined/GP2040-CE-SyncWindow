@@ -2,6 +2,7 @@
 #include "base64.h"
 
 #include "drivermanager.h"
+#include "drivers/dreamcast/DreamcastVMU.h"
 #include "storagemanager.h"
 #include "eventmanager.h"
 #include "layoutmanager.h"
@@ -40,7 +41,7 @@
 
 extern struct fsdata_file file__index_html[];
 
-const static char* spaPaths[] = { "/backup", "/display-config", "/led-config", "/pin-mapping", "/settings", "/reset-settings", "/add-ons", "/custom-theme", "/macro", "/peripheral-mapping" };
+const static char* spaPaths[] = { "/backup", "/display-config", "/led-config", "/pin-mapping", "/settings", "/reset-settings", "/add-ons", "/custom-theme", "/macro", "/peripheral-mapping", "/vmu-manager" };
 const static char* excludePaths[] = { "/css", "/images", "/js", "/static" };
 const static uint32_t rebootDelayMs = 500;
 static string http_post_uri;
@@ -667,8 +668,7 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.nobdReleaseDebounce, doc, "nobdReleaseDebounce");
     readDoc(gamepadOptions.dreamcastPinA, doc, "dreamcastPinA");
     readDoc(gamepadOptions.dreamcastPinB, doc, "dreamcastPinB");
-    readDoc(gamepadOptions.dcSyncMode, doc, "dcSyncMode");
-    readDoc(gamepadOptions.dcSyncWindow, doc, "dcSyncWindow");
+    // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     readDoc(gamepadOptions.disableVMU, doc, "disableVMU");
     readDoc(gamepadOptions.inputModeB1, doc, "inputModeB1");
     readDoc(gamepadOptions.inputModeB2, doc, "inputModeB2");
@@ -744,8 +744,7 @@ std::string getGamepadOptions()
     writeDoc(doc, "nobdReleaseDebounce", gamepadOptions.nobdReleaseDebounce ? 1 : 0);
     writeDoc(doc, "dreamcastPinA", gamepadOptions.dreamcastPinA);
     writeDoc(doc, "dreamcastPinB", gamepadOptions.dreamcastPinB);
-    writeDoc(doc, "dcSyncMode", gamepadOptions.dcSyncMode);
-    writeDoc(doc, "dcSyncWindow", gamepadOptions.dcSyncWindow);
+    // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     writeDoc(doc, "disableVMU", gamepadOptions.disableVMU ? 1 : 0);
     writeDoc(doc, "inputModeB1", gamepadOptions.inputModeB1);
     writeDoc(doc, "inputModeB2", gamepadOptions.inputModeB2);
@@ -2583,6 +2582,53 @@ std::string reboot() {
     return serialize_json(doc);
 }
 
+// getVMUData is handled as a special case in fs_open_custom — serves raw binary
+// directly from XIP flash with zero RAM allocation. See fs_open_custom below.
+
+std::string importVMUSave()
+{
+    DynamicJsonDocument doc = get_post_data();
+    std::string b64 = doc["data"] | "";
+    if (b64.empty()) return "{\"success\":false,\"error\":\"Missing data field\"}";
+
+    std::string decoded;
+    if (!Base64::Decode(b64, decoded)) return "{\"success\":false,\"error\":\"Base64 decode failed\"}";
+
+    // Validate DCI size before calling import
+    size_t sz = decoded.size();
+    if (sz < 32) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "{\"success\":false,\"error\":\"DCI too small: %u bytes\"}", (unsigned)sz);
+        return buf;
+    }
+    uint16_t fileBlocks = (uint16_t)((uint8_t)decoded[0x18]) | ((uint16_t)((uint8_t)decoded[0x19]) << 8);
+    size_t expectedSize = 32 + (size_t)fileBlocks * 512;
+    if (sz != expectedSize) {
+        char buf[192];
+        snprintf(buf, sizeof(buf),
+            "{\"success\":false,\"error\":\"DCI size mismatch: got %u bytes, expected %u (blocks=%u)\"}",
+            (unsigned)sz, (unsigned)expectedSize, (unsigned)fileBlocks);
+        return buf;
+    }
+
+    DreamcastVMU* vmu = DriverManager::getInstance().getVMU();
+    int result = vmu->importDCISave((const uint8_t*)decoded.data(), decoded.size());
+    switch (result) {
+        case 0: return "{\"success\":true}";
+        case 1: return "{\"success\":false,\"error\":\"Invalid DCI file format\"}";
+        case 2: return "{\"success\":false,\"error\":\"No free blocks on VMU\"}";
+        case 3: return "{\"success\":false,\"error\":\"No free directory entries on VMU\"}";
+        default: return "{\"success\":false,\"error\":\"Unknown import error\"}";
+    }
+}
+
+std::string formatVMU()
+{
+    DreamcastVMU* vmu = DriverManager::getInstance().getVMU();
+    vmu->formatWebconfig();
+    return "{\"success\":true}";
+}
+
 typedef std::string (*HandlerFuncPtr)();
 static const std::pair<const char*, HandlerFuncPtr> handlerFuncs[] =
 {
@@ -2631,6 +2677,8 @@ static const std::pair<const char*, HandlerFuncPtr> handlerFuncs[] =
     { "/api/abortGetHeldPins", abortGetHeldPins },
     { "/api/getUsedPins", getUsedPins },
     { "/api/getConfig", getConfig },
+    { "/api/importVMUSave", importVMUSave },
+    { "/api/formatVMU", formatVMU },
 #if !defined(NDEBUG)
     { "/api/echo", echo },
 #endif
@@ -2644,6 +2692,20 @@ static const std::pair<const char*, HandlerFuncStatusCodePtr> handlerFuncsWithSt
 
 int fs_open_custom(struct fs_file *file, const char *name)
 {
+    // Special case: serve VMU binary directly from XIP flash — zero RAM allocation.
+    // Points file->data at the memory-mapped flash address. lwIP streams it in chunks.
+    if (strcmp(name, "/api/getVMUData") == 0)
+    {
+        DreamcastVMU* vmu = DriverManager::getInstance().getVMU();
+        file->data = (const char*)vmu->getRawPointer();
+        file->len = VMU_MEMORY_SIZE;
+        file->index = file->len;
+        file->http_header_included = 0;
+        file->pextension = NULL;
+        file->is_custom_file = 0;
+        return 1;
+    }
+
     for (const auto& handlerFunc : handlerFuncs)
     {
         if (strcmp(handlerFunc.first, name) == 0)

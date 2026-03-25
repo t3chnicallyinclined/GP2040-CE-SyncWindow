@@ -81,45 +81,112 @@ static inline void maple_tx_program_init(PIO pio, uint sm, uint offset, uint pin
 }
 %}
 
-; RX: Three cooperating state machines
-; SM0 shifts in pin state on signal from SM1/SM2
-; SM1 watches pin A for transitions
-; SM2 watches pin B for transitions
+; RX: Single state machine protocol decoder
+; Ported from DreamPicoPort/MaplePad (maple_in.pio)
+; Copyright (c) 2022-2026 The DreamPicoPort Contributors (MIT License)
+;
+; This single SM does full Maple Bus protocol decode in hardware:
+; - Detects sync sequence (4 B-toggles while A is low)
+; - Samples data bits at correct clock phases (B value, then A value)
+; - Detects end-of-packet and signals via IRQ
+; - Produces clean decoded data bits (1 bit per shift), not raw pin samples
+;
+; Each FIFO word = 32 decoded data bits = 4 bytes of Maple payload.
+; Use DMA bswap to convert from network (MSByte-first) to host (LE) order.
+; 29 instructions (fits in 32-slot PIO instruction memory).
 
-.program maple_rx_triple1
-    wait 1 irq 7
-    in pins, 2
+.program maple_rx
 
-.program maple_rx_triple2
-    wait 0 pin 0
-    irq 7
-    wait 1 pin 0
-    irq 7
+; Wait for start sequence (4 B-toggles while A is low)
+wait_start:
 
-.program maple_rx_triple3
-    wait 0 pin 1
-    irq 7
-    wait 1 pin 1
-    irq 7
+mov y, ~NULL ; y = 0xFFFFFFFF (counts B toggles as negative)
+
+b_toggle_loop:
+jmp pin check_toggle_count ; Once A goes HIGH, check how much B toggled
+mov osr, pins ; copy pin values into output shift register
+out x 2 ; put A and B into register x
+jmp x-- b_toggle_loop ; keep waiting if B is high (x=0b01 or 0b11 → nonzero)
+; else: B is low, fall through
+
+wait 1 pin 1 ; wait for B to go back HIGH
+jmp pin wait_start ; if A went HIGH before B, not a valid sync → restart
+jmp y-- b_toggle_loop ; toggle detected; decrement counter and keep watching
+
+check_toggle_count:
+mov y, ~y ; convert negative count to positive
+set x, 4 ; we need exactly 4 B toggles
+jmp x!=y wait_start ; wrong count → not a valid sync sequence
+
+data_start:
+; Start notification removed (was: irq set 0 rel)
+; We only use the end-of-packet IRQ for polling-based consumption.
+nop
+
+; Wait for A to go low — first clock transition of data phase
+wait 0 pin 0
+
+
+.wrap_target
+data_loop:
+
+; Wait for B to toggle HIGH then LOW, or detect end-of-packet (A stays low)
+set y, 1
+end_detect_b_toggle:
+mov osr, pins ; sample both pins
+out x 1 ; extract A into x
+jmp !x sample_b_from_osr ; if A went low → this is a data bit, sample B now
+out x 1 ; extract B into x
+jmp !y end_detect_b_to_low ; if y=0, we're waiting for B to go back low
+end_detect_b_to_high:
+jmp !x end_detect_b_toggle ; B still LOW → keep waiting
+jmp y-- end_detect_b_toggle ; B went HIGH → decrement y, wait for LOW
+end_detect_b_to_low:
+jmp x-- end_detect_b_toggle ; B still HIGH → keep waiting
+; B went LOW after being HIGH → end of packet detected
+
+end_detected:
+in null 24 ; pad CRC byte to full 32-bit word (flush ISR)
+; Signal end-of-packet and stall until application clears the IRQ.
+; pollReceive() polls this flag, processes the packet, then clears it.
+irq wait 0 rel
+; After IRQ is cleared, SM loops back to wait_start via wrap.
+; Application should restart SM before clearing IRQ to avoid re-entering data_loop.
+
+sample_b_from_osr:
+in osr 1 ; shift in B value (already in OSR from the mov/out above)
+
+sample_a:
+wait 1 pin 1 ; wait for B to go HIGH (B-phase clock)
+wait 0 pin 1 ; wait for B to go LOW (B-phase data ready)
+in pins 1 ; shift in A value (the data bit)
+
+wait 1 pin 0 ; wait for A to go HIGH (next A-phase clock)
+
+.wrap
 
 % c-sdk {
-static inline void maple_rx_triple_program_init(PIO pio, uint* offsets, uint pin_a, uint pin_b, float clk_div)
+static inline void maple_rx_program_init(PIO pio, uint sm, uint offset, uint pin_a, uint pin_b, float clk_div)
 {
-    for (int sm = 0; sm < 3; sm++)
-    {
-        pio_sm_set_consecutive_pindirs(pio, sm, pin_a, 2, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_a, 2, false);
 
-        pio_sm_config c =
-            (sm == 0) ? maple_rx_triple1_program_get_default_config(offsets[0]) :
-            ((sm == 1) ? maple_rx_triple2_program_get_default_config(offsets[1]) :
-            maple_rx_triple3_program_get_default_config(offsets[2]));
+    pio_sm_config c = maple_rx_program_get_default_config(offset);
 
-        sm_config_set_in_pins(&c, pin_a);
-        sm_config_set_in_shift(&c, false, true, 32); // autopush every 32 bits (16 x 2-bit samples per FIFO word)
-        sm_config_set_clkdiv(&c, clk_div);
-        sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    // in_pins starts at pin_a (for `in pins` instructions)
+    sm_config_set_in_pins(&c, pin_a);
 
-        pio_sm_init(pio, sm, offsets[sm], &c);
-    }
+    // jmp_pin uses pin_a (for `jmp pin` instruction — checks A state)
+    sm_config_set_jmp_pin(&c, pin_a);
+
+    // Shift left, autopush at 32 bits (produces 4 decoded bytes per FIFO word)
+    sm_config_set_in_shift(&c, false, true, 32);
+
+    // Shift right for OSR (used to extract individual pin values)
+    sm_config_set_out_shift(&c, true, false, 32);
+
+    sm_config_set_clkdiv(&c, clk_div);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    pio_sm_init(pio, sm, offset, &c);
 }
 %}

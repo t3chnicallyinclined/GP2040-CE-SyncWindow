@@ -5,6 +5,7 @@
 #include "drivermanager.h"
 #include "storagemanager.h"
 #include "usbhostmanager.h"
+#include "drivers/dreamcast/DreamcastDriver.h"
 
 #include "addons/board_led.h"  // Add-Ons
 #include "addons/buzzerspeaker.h"
@@ -59,6 +60,14 @@ void GP2040Aux::run() {
 		// Run auxiliary functions for input driver on Core1
 		if ( inputDriver != nullptr ) {
 			inputDriver->processAux();
+		}
+
+		// Execute any pending VMU flash writes on Core 1.
+		// Core 0's Maple Bus hot path is RAM-resident so it keeps running
+		// uninterrupted while Core 1 performs flash erase+program here.
+		DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
+		if (dcDriver != nullptr) {
+			dcDriver->vmu.doFlashWriteFromCore1();
 		}
 	}
 }

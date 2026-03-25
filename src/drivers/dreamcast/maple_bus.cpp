@@ -85,7 +85,7 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     return true;
 }
 
-void MapleBus::startRx() {
+void __no_inline_not_in_flash_func(MapleBus::startRx)() {
     // Restart the RX state machine from the beginning of the program.
     // This ensures clean state — no stale data from previous packet.
     pio_sm_set_enabled(rxPio, rxSm, false);
@@ -110,7 +110,7 @@ void MapleBus::startRx() {
     rxStartTimeUs = time_us_64();
 }
 
-void MapleBus::sendPacket(const uint32_t* words, uint numWords) {
+void __no_inline_not_in_flash_func(MapleBus::sendPacket)(const uint32_t* words, uint numWords) {
     // All data is in wire (network) order. No DMA bswap, no pre-reversal needed.
     // Word 0 (bitPairsMinus1) is a PIO loop counter — stored as a plain integer.
     // PIO `out x,32` loads the FIFO word directly into X. Without bswap,
@@ -149,11 +149,11 @@ void MapleBus::sendPacket(const uint32_t* words, uint numWords) {
     dma_channel_set_trans_count(txDmaChannel, count, true);
 }
 
-bool MapleBus::isTransmitting() {
+bool __no_inline_not_in_flash_func(MapleBus::isTransmitting)() {
     return dma_channel_is_busy(txDmaChannel);
 }
 
-void MapleBus::flushRx() {
+void __no_inline_not_in_flash_func(MapleBus::flushRx)() {
     // Wait for TX DMA to finish feeding the PIO TX FIFO (5ms timeout).
     // Longest packet: VMU block read = 130 words = 520 bytes = ~2ms at 480ns/bit.
     uint64_t deadline = time_us_64() + 5000;
@@ -199,7 +199,7 @@ void MapleBus::flushRx() {
 // in pollReceive(), validate CRC, and return the packet data.
 // ============================================================
 
-bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
+bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPacket, uint* outLength) {
     // Check if the PIO has signaled end-of-packet via IRQ.
     // maple_rx uses `irq wait 0 rel` which sets the SM-relative IRQ flag.
     // The flag index is rxSm (SM-relative IRQ 0 maps to PIO IRQ rxSm).
@@ -301,7 +301,7 @@ bool MapleBus::pollReceive(const uint8_t** outPacket, uint* outLength) {
     return false;
 }
 
-uint32_t MapleBus::calcCRC(const uint32_t* words, uint numWords) {
+uint32_t __no_inline_not_in_flash_func(MapleBus::calcCRC)(const uint32_t* words, uint numWords) {
     // Maple Bus CRC: XOR all 32-bit words, then fold all 4 bytes to 8-bit CRC.
     // CRC byte placed at bits [31:24] (wire order) — PIO sends MSBit first,
     // so this byte goes on wire first, matching the Maple Bus protocol spec.
@@ -314,7 +314,7 @@ uint32_t MapleBus::calcCRC(const uint32_t* words, uint numWords) {
     return (uint32_t)crc << 24;  // CRC at bits [31:24] for wire TX
 }
 
-uint32_t MapleBus::calcBitPairs(uint packetSize) {
+uint32_t __no_inline_not_in_flash_func(MapleBus::calcBitPairs)(uint packetSize) {
     // BitPairsMinus1: PIO data loop consumes 2 bits per iteration.
     // Wire data = header (4 bytes) + payload + CRC (1 byte).
     // packetSize includes bitPairsMinus1 (4 bytes) + header + payload + CRC word (4 bytes).

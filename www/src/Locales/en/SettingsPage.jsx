@@ -67,6 +67,7 @@ export default {
 	'input-timing-window-label': 'Sync Window (ms)',
 	'nobd-release-debounce-label': 'Release Debounce',
 	'nobd-release-debounce-hint': 'Debounces button releases using the sync window timer. Recommended for rhythm games (Guitar Hero, Cadence of Hyrule, etc.) to prevent phantom inputs from switch bounce on release. Not needed for fighting games.',
+	'dreamcast-debounce-hint': 'Dreamcast mode: debounce is generally unnecessary. The 16ms Maple Bus polling interval acts as a natural sync window.',
 	'mini-menu-gamepad-input': 'Use Gamepad Input for Display Mini Menu',
 	'ps4-mode-explanation-text':
 		'PS4 mode allows GP2040-CE to run as an authenticated PS4 controller.',
@@ -185,9 +186,8 @@ export default {
 	'input-mode-device-type-label': 'Input Mode Controller Type',
 	'dreamcast-pin-a-label': 'Dreamcast Maple Bus Pin A (SDCKA)',
 	'dreamcast-pin-b-label': 'Dreamcast Maple Bus Pin B (SDCKB)',
-	'dc-sync-mode-label': 'DC Sync Mode',
-	'dc-sync-mode-off': 'Off (sample at poll)',
-	'dc-sync-mode-accumulate': 'Accumulate (zero latency)',
-	'dc-sync-mode-window': 'Sync Window (boundary-aware)',
-	'dc-sync-window-label': 'DC Sync Window (ms)',
+	// DC sync mode labels removed — always raw passthrough (matches real DC hardware)
+	'vmu-manager-label': 'VMU Manager',
+	'vmu-manager-description': 'Download or upload VMU save data, or format the VMU.',
+	'vmu-manager-link': 'Go to VMU Manager →',
 };

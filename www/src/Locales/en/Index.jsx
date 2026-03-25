@@ -19,6 +19,7 @@ import ReactiveLED from './Addons/ReactiveLED';
 import HETrigger from './Addons/HETrigger';
 import InputMacroAddon from './InputMacroAddon';
 import LayoutConfig from './LayoutConfig';
+import VMUManagerPage from './VMUManagerPage';
 import Proto from './Proto/Index';
 
 export default {
@@ -44,4 +45,5 @@ export default {
 	ReactiveLED,
 	Proto,
 	HETrigger,
+	VMUManagerPage,
 };

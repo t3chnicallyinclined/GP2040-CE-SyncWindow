@@ -111,6 +111,9 @@ const Navigation = () => {
 						<NavDropdown.Item as={NavLink} eventKey={eventKey++} to="/backup">
 							{t('Navigation:backup-label')}
 						</NavDropdown.Item>
+						<NavDropdown.Item as={NavLink} eventKey={eventKey++} to="/vmu-manager">
+							{t('Navigation:vmu-manager-label')}
+						</NavDropdown.Item>
 						<NavDropdown.Item
 							as={NavLink}
 							eventKey={eventKey++}

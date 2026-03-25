@@ -1,6 +1,7 @@
 #include "drivers/dreamcast/DreamcastVMU.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"  // for __dmb()
+#include "pico/multicore.h"
 #include "pico/time.h"
 
 // Dreamcast VMU sub-peripheral — wire-order architecture (NO DMA bswap).
@@ -13,6 +14,10 @@
 
 // Wire-order function code constants
 #define MAPLE_FUNC_MEMORY_CARD_WIRE  maple_host_to_wire(MAPLE_FUNC_MEMORY_CARD)
+
+// FAT encoding macros (DreamPicoPort format) — used in format() and importDCISave()
+#define U16_TO_UPPER_HALF_WORD(val) ((static_cast<uint32_t>(val) << 24) | ((static_cast<uint32_t>(val) << 8) & 0x00FF0000))
+#define U16_TO_LOWER_HALF_WORD(val) (((static_cast<uint32_t>(val) << 8) & 0x0000FF00) | ((static_cast<uint32_t>(val) >> 8) & 0x000000FF))
 
 DreamcastVMU::DreamcastVMU()
     : flashWriteBlockNum(0),
@@ -224,13 +229,186 @@ void DreamcastVMU::doFlashWriteFromCore1() {
     pendingFlashWrite = false;  // Clear AFTER flash op — Core 0 spin loop exits now
 }
 
-// Build 7 media info words for GET_MEDIA_INFO response payload.
-// Uses DreamPicoPort's U16_TO_UPPER/LOWER_HALF_WORD macros to match exact byte encoding.
-// DreamPicoPort stores these in HOST order and DMA bswap converts to wire.
-// Since we have NO DMA bswap, we bswap32 the macro output to get the same PIO FIFO values.
-#define U16_TO_UPPER_HALF_WORD(val) ((static_cast<uint32_t>(val) << 24) | ((static_cast<uint32_t>(val) << 8) & 0x00FF0000))
-#define U16_TO_LOWER_HALF_WORD(val) (((static_cast<uint32_t>(val) << 8) & 0x0000FF00) | ((static_cast<uint32_t>(val) >> 8) & 0x000000FF))
+// ============================================================
+// Web UI management API
+// ============================================================
 
+const uint8_t* DreamcastVMU::getRawPointer() const {
+    return (const uint8_t*)VMU_XIP_BASE;
+}
+
+// Alarm callback for flash write — runs from RAM (timer IRQ context).
+// flash_range_erase/program disable XIP, so caller must be in RAM.
+struct VmuFlashWriteParams {
+    uint32_t sectorStart;
+    uint8_t* sectorData;
+};
+
+static volatile bool vmuFlashWriteDone = false;
+
+static int64_t vmuFlashWriteAlarmCb(alarm_id_t id, void* userData) {
+    VmuFlashWriteParams* p = (VmuFlashWriteParams*)userData;
+    multicore_lockout_start_blocking();
+    flash_range_erase(p->sectorStart, FLASH_SECTOR_SIZE);
+    flash_range_program(p->sectorStart, p->sectorData, FLASH_SECTOR_SIZE);
+    multicore_lockout_end_blocking();
+    vmuFlashWriteDone = true;
+    return 0;  // don't reschedule
+}
+
+void DreamcastVMU::writeBlockWebconfig(uint16_t blockNum, const uint8_t* data) {
+    // Read-modify-write the 4KB flash sector containing this block.
+    // Uses an alarm callback (runs from RAM) to safely do flash ops,
+    // same pattern as FlashPROM::commit().
+    uint32_t blockFlashOffset = VMU_FLASH_OFFSET + (uint32_t)blockNum * VMU_BYTES_PER_BLOCK;
+    uint32_t sectorStart = blockFlashOffset & ~(FLASH_SECTOR_SIZE - 1);
+    uint32_t offsetInSector = blockFlashOffset - sectorStart;
+
+    // Read sector from XIP before the alarm disables it
+    memcpy(sectorBuffer, (const uint8_t*)(XIP_BASE + sectorStart), FLASH_SECTOR_SIZE);
+    memcpy(sectorBuffer + offsetInSector, data, VMU_BYTES_PER_BLOCK);
+
+    VmuFlashWriteParams params = { sectorStart, sectorBuffer };
+    vmuFlashWriteDone = false;
+    add_alarm_in_ms(0, vmuFlashWriteAlarmCb, &params, true);
+    while (!vmuFlashWriteDone) { tight_loop_contents(); }
+}
+
+int DreamcastVMU::importDCISave(const uint8_t* dciData, size_t dciSize) {
+    // DCI format: 32-byte dir entry + N * 512 bytes of block data.
+    // DCI block data has each uint32 word byte-swapped relative to our flash format.
+    // We bswap32 each word during write to convert DCI → flash byte order.
+    if (dciSize < 32) return 1;
+    size_t dataSize = dciSize - 32;
+    if (dataSize == 0 || (dataSize % VMU_BYTES_PER_BLOCK) != 0) return 1;
+
+    const uint8_t* dirEntry = dciData;
+    const uint8_t* blockData = dciData + 32;
+    uint16_t fileBlocks = (uint16_t)dirEntry[0x18] | ((uint16_t)dirEntry[0x19] << 8);
+    if (fileBlocks == 0 || fileBlocks * VMU_BYTES_PER_BLOCK != dataSize) return 1;
+
+    // Decode FAT from flash into host-order uint16 array.
+    // See format() for encoding details.
+    static uint16_t fat16[256];
+    const uint32_t* fatFlash = (const uint32_t*)(VMU_XIP_BASE + VMU_FAT_BLOCK_NO * VMU_BYTES_PER_BLOCK);
+    for (int i = 0; i < 128; i++) {
+        uint32_t fw = fatFlash[i];
+        fat16[2*i]   = (uint16_t)(((fw >> 8) & 0xFF) << 8 | (fw & 0xFF));
+        fat16[2*i+1] = (uint16_t)(((fw >> 24) & 0xFF) << 8 | ((fw >> 16) & 0xFF));
+    }
+
+    // Delete existing save with same filename (12 bytes at offset 0x04)
+    const uint8_t* newName = dirEntry + 0x04;
+    static uint8_t infoBlock[VMU_BYTES_PER_BLOCK];
+    for (int b = VMU_FILE_INFO_BLOCK_NO; b >= VMU_FILE_INFO_BLOCK_NO - VMU_NUM_FILE_INFO + 1; b--) {
+        const uint8_t* fb = (const uint8_t*)(VMU_XIP_BASE + b * VMU_BYTES_PER_BLOCK);
+        memcpy(infoBlock, fb, VMU_BYTES_PER_BLOCK);
+        bool blockModified = false;
+        for (int e = 0; e < 16; e++) {
+            uint8_t* ent = infoBlock + e * 32;
+            if (ent[0] == 0) continue;  // empty entry
+            if (memcmp(ent + 0x04, newName, 12) == 0) {
+                // Found existing save — free its FAT chain and clear dir entry
+                uint16_t blk = (uint16_t)ent[0x02] | ((uint16_t)ent[0x03] << 8);
+                while (blk < 256 && blk != 0xFFFF && blk != 0xFFFC && blk != 0xFFFA) {
+                    uint16_t next = fat16[blk];
+                    fat16[blk] = 0xFFFC;  // free
+                    if (next == 0xFFFF) break;
+                    blk = next;
+                }
+                memset(ent, 0, 32);
+                blockModified = true;
+            }
+        }
+        if (blockModified) {
+            writeBlockWebconfig((uint16_t)b, infoBlock);
+        }
+    }
+
+    // Find fileBlocks free entries in the user save area, allocating from top down
+    // (DC convention: first block = highest, chain goes downward)
+    static uint16_t freeBlocks[200];
+    int freeCount = 0;
+    for (int i = 199; i >= 0 && freeCount < fileBlocks; i--) {
+        if (fat16[i] == 0xFFFC) {
+            freeBlocks[freeCount++] = (uint16_t)i;
+        }
+    }
+    if (freeCount < fileBlocks) return 2;  // no free blocks
+
+    // Write data blocks to flash, bswap32 each word (DCI → flash byte order)
+    static uint8_t convBlock[VMU_BYTES_PER_BLOCK];
+    for (int i = 0; i < fileBlocks; i++) {
+        const uint32_t* src = (const uint32_t*)(blockData + i * VMU_BYTES_PER_BLOCK);
+        uint32_t* dst = (uint32_t*)convBlock;
+        for (int w = 0; w < VMU_WORDS_PER_BLOCK; w++) {
+            dst[w] = __builtin_bswap32(src[w]);
+        }
+        writeBlockWebconfig(freeBlocks[i], convBlock);
+    }
+
+    // Update FAT: chain the allocated blocks (DC convention: each points to next, 0xFFFA = end)
+    // freeBlocks[0] is the highest block (first block of file), freeBlocks[last] is the lowest
+    for (int i = 0; i < fileBlocks - 1; i++) {
+        fat16[freeBlocks[i]] = freeBlocks[i + 1];
+    }
+    fat16[freeBlocks[fileBlocks - 1]] = 0xFFFA;  // end-of-chain
+
+    // Re-encode FAT and write
+    static uint8_t fatBlock[VMU_BYTES_PER_BLOCK];
+    uint32_t* fatDst = (uint32_t*)fatBlock;
+    for (int i = 0; i < 128; i++) {
+        uint32_t macroWord = U16_TO_UPPER_HALF_WORD(fat16[2*i]) | U16_TO_LOWER_HALF_WORD(fat16[2*i+1]);
+        fatDst[i] = __builtin_bswap32(macroWord);
+    }
+    writeBlockWebconfig(VMU_FAT_BLOCK_NO, fatBlock);
+
+    // Find a free dir entry and write the new file info
+    for (int b = VMU_FILE_INFO_BLOCK_NO; b >= VMU_FILE_INFO_BLOCK_NO - VMU_NUM_FILE_INFO + 1; b--) {
+        const uint8_t* fb = (const uint8_t*)(VMU_XIP_BASE + b * VMU_BYTES_PER_BLOCK);
+        memcpy(infoBlock, fb, VMU_BYTES_PER_BLOCK);
+        for (int e = 0; e < 16; e++) {
+            bool empty = true;
+            for (int j = 0; j < 32; j++) {
+                if (infoBlock[e*32 + j] != 0) { empty = false; break; }
+            }
+            if (empty) {
+                memcpy(infoBlock + e * 32, dirEntry, 32);
+                infoBlock[e * 32 + 0x02] = (uint8_t)(freeBlocks[0] & 0xFF);
+                infoBlock[e * 32 + 0x03] = (uint8_t)((freeBlocks[0] >> 8) & 0xFF);
+                writeBlockWebconfig((uint16_t)b, infoBlock);
+                return 0;  // success
+            }
+        }
+    }
+    return 3;  // no free dir entry (shouldn't happen since we just deleted one)
+}
+
+void DreamcastVMU::formatWebconfig_inner() {
+    format();
+}
+
+static volatile bool vmuFormatDone = false;
+
+static int64_t vmuFormatAlarmCb(alarm_id_t id, void* userData) {
+    DreamcastVMU* vmu = (DreamcastVMU*)userData;
+    multicore_lockout_start_blocking();
+    // format() calls doFlashWrite() which does flash_range_erase/program directly.
+    // Since we're in an alarm callback (RAM), XIP disable is safe for this core.
+    // multicore_lockout keeps Core 1 paused throughout.
+    vmu->formatWebconfig_inner();
+    multicore_lockout_end_blocking();
+    vmuFormatDone = true;
+    return 0;
+}
+
+void DreamcastVMU::formatWebconfig() {
+    vmuFormatDone = false;
+    add_alarm_in_ms(0, vmuFormatAlarmCb, this, true);
+    while (!vmuFormatDone) { tight_loop_contents(); }
+}
+
+// Build 7 media info words for GET_MEDIA_INFO response payload.
 void DreamcastVMU::buildMediaInfoForWire(uint32_t* out) {
     // Build in DreamPicoPort HOST format (using their macros), then bswap32 to match
     // what DreamPicoPort's DMA bswap produces for the PIO FIFO.

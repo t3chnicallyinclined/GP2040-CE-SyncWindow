@@ -14,6 +14,7 @@ import LEDConfigPage from './Pages/LEDConfigPage';
 import CustomThemePage from './Pages/CustomThemePage';
 import AddonsConfigPage from './Pages/AddonsConfigPage';
 import BackupPage from './Pages/BackupPage';
+import VMUManagerPage from './Pages/VMUManagerPage';
 import PlaygroundPage from './Pages/PlaygroundPage';
 import InputMacroAddonPage from './Pages/InputMacroAddonPage';
 
@@ -39,6 +40,7 @@ const App = () => {
 						<Route path="/display-config" element={<DisplayConfigPage />} />
 						<Route path="/add-ons" element={<AddonsConfigPage />} />
 						<Route path="/backup" element={<BackupPage />} />
+						<Route path="/vmu-manager" element={<VMUManagerPage />} />
 						<Route path="/playground" element={<PlaygroundPage />} />
 						<Route path="/macro" element={<InputMacroAddonPage />} />
 					</Routes>

@@ -288,32 +288,75 @@ void ButtonLayoutScreen::drawScreen() {
         line1 += " c2:" + std::to_string(dc->debugCmd2Count);
         line1 += " c9:" + std::to_string(dc->debugCmd9Count);
 
-        // Line 2: VMU diagnostics + filtered packets
-        std::string line2 = "Vr:" + std::to_string(dc->vmu.debugVmuRxCount);
-        line2 += " Vt:" + std::to_string(dc->vmu.debugVmuTxCount);
-        line2 += " Vw:" + std::to_string(dc->vmu.debugVmuWriteCount);
-        line2 += " f:" + std::to_string(dc->debugFilteredCount);
+        // Line 2: VMU diagnostics — V:1/0=enabled/disabled, Vr=rx, Vt=tx, Vc=last cmd, Ve=last error
+        char vmuBuf[64];
+        snprintf(vmuBuf, sizeof(vmuBuf), "V:%d Vr:%lu Vt:%lu Vc:%d",
+                 dc->disableVMU ? 0 : 1,
+                 (unsigned long)dc->vmu.debugVmuRxCount,
+                 (unsigned long)dc->vmu.debugVmuTxCount,
+                 (int)dc->vmu.debugVmuLastCmd);
+        std::string line2 = vmuBuf;
 
-        // Line 3: Loop timing + consecutive polls before re-probe
-        // LP = worst-case loop µs, CP = consecutive CMD 9 polls before CMD 1
-        char hexBuf[32];
-        snprintf(hexBuf, sizeof(hexBuf), "LP:%lu CP:%lu",
-                 (unsigned long)dc->debugLoopMaxUs,
-                 (unsigned long)dc->debugMaxConsecutivePolls);
-        std::string line3 = hexBuf;
+        // Lines 3-5: Find the most recent BLOCK_READ (0x0B) log entry
+        // and show its raw bytes so we can see exact byte alignment
+        std::string line3 = "", line4 = "", line5 = "";
+        {
+            char logBuf[64];
+            uint16_t total = dc->vmu.cmdLogCount;
+            uint16_t wIdx = dc->vmu.cmdLogWriteIdx;
+            int avail = (total < VMU_LOG_MAX_ENTRIES) ? total : VMU_LOG_MAX_ENTRIES;
 
-        // Line 4: DC buttons, gamepad state, last command
-        snprintf(hexBuf, sizeof(hexBuf), "DC:%04X cr:%d co:%lu",
-                 dc->debugDcButtons,
-                 (int)dc->debugLastRxCmd,
-                 (unsigned long)dc->debugCmdOtherCount);
-        std::string line4 = hexBuf;
+            // Find most recent FAILED BLOCK_READ (response=FILE_ERROR) and most recent OK one
+            int failIdx = -1, okIdx = -1;
+            for (int i = avail - 1; i >= 0; i--) {
+                int idx = (wIdx - avail + i + VMU_LOG_MAX_ENTRIES) % VMU_LOG_MAX_ENTRIES;
+                if (dc->vmu.cmdLog[idx].cmd == 0x0B) {
+                    if (failIdx < 0 && dc->vmu.cmdLog[idx].response == (uint8_t)MAPLE_CMD_RESPOND_FILE_ERROR)
+                        failIdx = idx;
+                    if (okIdx < 0 && dc->vmu.cmdLog[idx].response == (uint8_t)MAPLE_CMD_RESPOND_DATA_XFER)
+                        okIdx = idx;
+                }
+                if (failIdx >= 0 && okIdx >= 0) break;
+            }
+            int foundIdx = (failIdx >= 0) ? failIdx : okIdx;
+
+            // Line 3: FAIL — hdr[4] + payload[8] = 12 bytes
+            // Format: "F H:XXXXXXXX XXXXXXXX" = header then locWord (skip funcCode)
+            // rawBytes[0..3]=header, [4..7]=funcCode, [8..11]=locWord
+            if (failIdx >= 0) {
+                const VmuLogEntry& ef = dc->vmu.cmdLog[failIdx];
+                snprintf(logBuf, sizeof(logBuf), "F%02X%02X%02X%02X %02X%02X%02X%02X",
+                         ef.rawBytes[0], ef.rawBytes[1], ef.rawBytes[2], ef.rawBytes[3],
+                         ef.rawBytes[8], ef.rawBytes[9], ef.rawBytes[10], ef.rawBytes[11]);
+                line3 = logBuf;
+            } else {
+                line3 = "F: none";
+            }
+            // Line 4: OK — same format
+            if (okIdx >= 0) {
+                const VmuLogEntry& eo = dc->vmu.cmdLog[okIdx];
+                snprintf(logBuf, sizeof(logBuf), "O%02X%02X%02X%02X %02X%02X%02X%02X",
+                         eo.rawBytes[0], eo.rawBytes[1], eo.rawBytes[2], eo.rawBytes[3],
+                         eo.rawBytes[8], eo.rawBytes[9], eo.rawBytes[10], eo.rawBytes[11]);
+                line4 = logBuf;
+            } else {
+                line4 = "O: none";
+            }
+            // Line 5: counts + flash write status
+            snprintf(logBuf, sizeof(logBuf), "ok%lu er%lu fw%lu fb%u",
+                     (unsigned long)dc->vmu.debugVmuReadOkCount,
+                     (unsigned long)dc->vmu.debugVmuReadErrCount,
+                     (unsigned long)dc->vmu.debugVmuFlashCount,
+                     (unsigned)dc->vmu.debugVmuLastFlashBlock);
+            line5 = logBuf;
+        }
 
         getRenderer()->drawText(0, 0, line0);
         getRenderer()->drawText(0, 1, line1);
         getRenderer()->drawText(0, 2, line2);
         getRenderer()->drawText(0, 3, line3);
         getRenderer()->drawText(0, 4, line4);
+        getRenderer()->drawText(0, 5, line5);
         return;
     }
 

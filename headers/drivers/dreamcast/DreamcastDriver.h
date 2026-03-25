@@ -20,6 +20,7 @@ public:
 
     bool init(uint pin_a, uint pin_b);
     void process(Gamepad* gamepad);
+    virtual void processAux();  // Called from Core 1 — executes pending VMU flash writes
     bool isConnected() { return connected; }
 
     // Debug counters (visible on OLED)

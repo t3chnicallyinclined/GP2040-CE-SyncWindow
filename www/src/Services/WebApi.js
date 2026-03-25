@@ -696,6 +696,27 @@ async function reboot(bootMode) {
 		.catch(console.error);
 }
 
+async function getVMUData() {
+	// Returns raw binary (128KB) as ArrayBuffer — not JSON
+	const response = await fetch(`${baseUrl}/api/getVMUData`);
+	if (!response.ok) throw new Error('Failed to download VMU data');
+	return response.arrayBuffer();
+}
+
+async function importVMUSave(dciBytes) {
+	const bytes = new Uint8Array(dciBytes);
+	let binary = '';
+	for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+	const b64 = btoa(binary);
+	const response = await Http.post(`${baseUrl}/api/importVMUSave`, { data: b64 });
+	return response.data;
+}
+
+async function formatVMU() {
+	const response = await Http.post(`${baseUrl}/api/formatVMU`, {});
+	return response.data;
+}
+
 function sanitizeRequest(request) {
 	const newRequest = { ...request };
 	delete newRequest.usedPins;
@@ -743,4 +764,7 @@ export default {
 	getHeldPins,
 	abortGetHeldPins,
 	reboot,
+	getVMUData,
+	importVMUSave,
+	formatVMU,
 };

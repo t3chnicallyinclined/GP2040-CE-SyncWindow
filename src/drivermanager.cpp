@@ -1,6 +1,7 @@
 #include "drivermanager.h"
 #include "storagemanager.h"
 #include "drivers/dreamcast/DreamcastDriver.h"
+#include "drivers/dreamcast/DreamcastVMU.h"
 
 #include "drivers/net/NetDriver.h"
 #include "drivers/astro/AstroDriver.h"
@@ -89,4 +90,11 @@ void DriverManager::setup(InputMode mode) {
     // Initialize our chosen driver
     driver->initialize();
     inputMode = mode;
+}
+
+DreamcastVMU* DriverManager::getVMU() {
+    if (dcDriver != nullptr) return &dcDriver->vmu;
+    // Webconfig mode: return a static standalone VMU instance for flash access.
+    static DreamcastVMU standaloneVMU;
+    return &standaloneVMU;
 }

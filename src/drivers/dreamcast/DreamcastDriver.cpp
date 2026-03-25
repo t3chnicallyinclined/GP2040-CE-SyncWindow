@@ -249,7 +249,7 @@ void DreamcastDriver::buildResendPacket() {
     );
 }
 
-void DreamcastDriver::sendResendRequest() {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendResendRequest)() {
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | lastPort;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
     resendPacketBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_SEND_AGAIN);
@@ -257,7 +257,7 @@ void DreamcastDriver::sendResendRequest() {
     bus.sendPacket(resendPacketBuf, 3);
 }
 
-uint16_t DreamcastDriver::mapButtonsToDC(uint32_t gpButtons, uint8_t dpad) {
+uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t gpButtons, uint8_t dpad) {
     uint16_t dc = 0xFFFF; // All released (inverted logic)
 
     if (gpButtons & GAMEPAD_MASK_B1) dc &= ~DC_BTN_A;
@@ -276,7 +276,7 @@ uint16_t DreamcastDriver::mapButtonsToDC(uint32_t gpButtons, uint8_t dpad) {
     return dc;
 }
 
-void DreamcastDriver::accumulate(Gamepad* gamepad) {
+void __no_inline_not_in_flash_func(DreamcastDriver::accumulate)(Gamepad* gamepad) {
     // Latch button presses between DC polls so brief taps aren't missed
     accumButtons |= gamepad->state.buttons;
     accumDpad    |= gamepad->state.dpad;
@@ -290,7 +290,7 @@ void DreamcastDriver::accumulate(Gamepad* gamepad) {
     if (rt > accumRt) accumRt = rt;
 }
 
-void DreamcastDriver::sendControllerState(Gamepad* gamepad) {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad* gamepad) {
     uint32_t buttons;
     uint8_t  dpad;
     uint8_t  lt, rt;
@@ -355,7 +355,7 @@ void DreamcastDriver::sendControllerState(Gamepad* gamepad) {
     bus.sendPacket(controllerPacketBuf, 6);
 }
 
-void DreamcastDriver::sendInfoResponse() {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendInfoResponse)() {
     // CMD 1 (DEVICE_REQUEST): respond with cmd 5 (DEVICE_INFO), 28 words
     uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
@@ -366,7 +366,7 @@ void DreamcastDriver::sendInfoResponse() {
     bus.sendPacket(infoPacketBuf, 31);
 }
 
-void DreamcastDriver::sendExtInfoResponse() {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendExtInfoResponse)() {
     // CMD 2 (ALL_STATUS_REQUEST): respond with cmd 6 (EXT_DEVICE_INFO), 48 words
     // MaplePad uses a 48-word payload: first 28 words are device info, rest are zero.
     static uint32_t extInfoBuf[51];  // bitpairs + header + 48 payload + CRC
@@ -386,7 +386,7 @@ void DreamcastDriver::sendExtInfoResponse() {
     bus.sendPacket(extInfoBuf, 51);
 }
 
-void DreamcastDriver::sendACKResponse() {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendACKResponse)() {
     uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
@@ -396,7 +396,7 @@ void DreamcastDriver::sendACKResponse() {
     bus.sendPacket(ackPacketBuf, 3);
 }
 
-void DreamcastDriver::sendUnknownCommandResponse() {
+void __no_inline_not_in_flash_func(DreamcastDriver::sendUnknownCommandResponse)() {
     // MaplePad responds to unrecognized commands with UNKNOWN_COMMAND (0xFD / -3)
     static uint32_t unknownBuf[3];
 
@@ -410,12 +410,16 @@ void DreamcastDriver::sendUnknownCommandResponse() {
     bus.sendPacket(unknownBuf, 3);
 }
 
-void DreamcastDriver::waitTxFlushRx() {
+void DreamcastDriver::processAux() {
+    // Flash writes are handled directly in GP2040Aux::run() via vmu.doFlashWriteFromCore1()
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::waitTxFlushRx)() {
     // Wait for full TX completion (DMA + PIO FIFO + wire) then flush RX echo
     bus.flushRx();
 }
 
-void DreamcastDriver::process(Gamepad* gamepad) {
+void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
     uint64_t nowUs = time_us_64();
 
     // Loop timing diagnostic: track max time between process() calls

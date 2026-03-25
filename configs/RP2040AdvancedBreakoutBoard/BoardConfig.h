@@ -11,6 +11,11 @@
 
 #define BOARD_CONFIG_LABEL "RP2040 Advanced Breakout Board"
 
+// Dreamcast mode: stock debounce 0, no NOBD sync window.
+// The 16ms Maple Bus polling interval acts as a natural sync window.
+#define DEFAULT_DEBOUNCE_DELAY 0
+#define DEFAULT_NOBD_SYNC_DELAY 0
+
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define GPIO_PIN_19 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |

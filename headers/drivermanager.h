@@ -6,6 +6,7 @@
 
 class GPDriver;
 class DreamcastDriver;
+class DreamcastVMU;
 
 class DriverManager {
 public:
@@ -17,6 +18,10 @@ public:
     }
     GPDriver * getDriver() { return driver; }
     DreamcastDriver * getDCDriver() { return dcDriver; }
+    // Returns a VMU instance regardless of current input mode.
+    // In Dreamcast mode: returns the live driver's VMU.
+    // In webconfig mode: returns a static standalone VMU (for flash access only).
+    DreamcastVMU * getVMU();
     void setup(InputMode);
     InputMode getInputMode(){ return inputMode; }
     bool isConfigMode(){ return (inputMode == INPUT_MODE_CONFIG); }

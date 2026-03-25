@@ -45,7 +45,7 @@ execute_process(COMMAND ${GIT_EXECUTABLE} describe --always --abbrev=7
 string(REGEX REPLACE "v([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" CMAKE_GIT_REPO_VERSION ${GIT_REPO_VERSION})
 string(REGEX REPLACE "^(.......-.*)|(.......)$" "0.0.0" CMAKE_GIT_REPO_VERSION ${CMAKE_GIT_REPO_VERSION}) # fix if all we have is the git SHA
 # NOBD Release Version — update this number before each release build
-set(NOBD_RELEASE "15")
+set(NOBD_RELEASE "16")
 set(GIT_REPO_VERSION "v${CMAKE_GIT_REPO_VERSION}-nobd-${NOBD_RELEASE}")
 
 configure_file("headers/version.h.in" "headers/version.h")

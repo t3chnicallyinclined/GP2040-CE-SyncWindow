@@ -461,8 +461,7 @@ const schema = yup.object().shape({
 	nobdReleaseDebounce: yup.number().label('NOBD Release Debounce'),
 	dreamcastPinA: yup.number().min(0).max(29).label('Dreamcast Pin A'),
 	dreamcastPinB: yup.number().min(0).max(29).label('Dreamcast Pin B'),
-	dcSyncMode: yup.number().min(0).max(2).label('DC Sync Mode'),
-	dcSyncWindow: yup.number().min(1).max(8).label('DC Sync Window'),
+	// dcSyncMode: removed from UI — always Off (raw passthrough like real DC hardware)
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
 	inputModeB1: yup
 		.number()
@@ -1553,6 +1552,49 @@ export default function SettingsPage() {
 															translatedInputModeAuthentications,
 														)}
 													</Form.Group>
+													{values.inputMode === 16 && (
+													<>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-pin-a-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastPinA"
+																	className="form-control-sm"
+																	value={values.dreamcastPinA}
+																	onChange={handleChange}
+																	min={0}
+																	max={29}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-pin-b-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastPinB"
+																	className="form-control-sm"
+																	value={values.dreamcastPinB}
+																	onChange={handleChange}
+																	min={0}
+																	max={29}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Col>
+																<p className="mb-1"><strong>{t('SettingsPage:vmu-manager-label')}</strong></p>
+																<p className="text-muted mb-1" style={{fontSize: '0.9em'}}>{t('SettingsPage:vmu-manager-description')}</p>
+																<NavLink to="/vmu-manager" className="btn btn-secondary btn-sm">{t('SettingsPage:vmu-manager-link')}</NavLink>
+															</Col>
+														</Form.Group>
+													</>
+													)}
 													<Button type="submit">
 														{t('Common:button-save-label')}
 													</Button>
@@ -1718,6 +1760,11 @@ export default function SettingsPage() {
 															</Form.Select>
 														</Col>
 													</Form.Group>
+														{values.inputMode === 16 && (
+															<Form.Text muted>
+																{t('SettingsPage:dreamcast-debounce-hint')}
+															</Form.Text>
+														)}
 													<Form.Group className="row mb-3">
 														<Form.Label>
 															{values.nobdSyncDelay > 0
@@ -1775,77 +1822,6 @@ export default function SettingsPage() {
 															</Form.Text>
 														</Col>
 													</Form.Group>
-													)}
-													{values.inputMode === 16 && (
-													<>
-													<Form.Group className="row mb-3">
-														<Form.Label>
-															{t('SettingsPage:dreamcast-pin-a-label')}
-														</Form.Label>
-														<Col sm={3}>
-															<Form.Control
-																type="number"
-																name="dreamcastPinA"
-																className="form-control-sm"
-																value={values.dreamcastPinA}
-																onChange={handleChange}
-																min={0}
-																max={29}
-															/>
-														</Col>
-													</Form.Group>
-													<Form.Group className="row mb-3">
-														<Form.Label>
-															{t('SettingsPage:dreamcast-pin-b-label')}
-														</Form.Label>
-														<Col sm={3}>
-															<Form.Control
-																type="number"
-																name="dreamcastPinB"
-																className="form-control-sm"
-																value={values.dreamcastPinB}
-																onChange={handleChange}
-																min={0}
-																max={29}
-															/>
-														</Col>
-													</Form.Group>
-													<Form.Group className="row mb-3">
-														<Form.Label>
-															{t('SettingsPage:dc-sync-mode-label')}
-														</Form.Label>
-														<Col sm={4}>
-															<Form.Select
-																name="dcSyncMode"
-																className="form-select-sm"
-																value={values.dcSyncMode}
-																onChange={handleChange}
-															>
-																<option value={0}>{t('SettingsPage:dc-sync-mode-off')}</option>
-																<option value={1}>{t('SettingsPage:dc-sync-mode-accumulate')}</option>
-																<option value={2}>{t('SettingsPage:dc-sync-mode-window')}</option>
-															</Form.Select>
-														</Col>
-													</Form.Group>
-													{parseInt(values.dcSyncMode) === 2 && (
-													<Form.Group className="row mb-3">
-														<Form.Label>
-															{t('SettingsPage:dc-sync-window-label')}
-														</Form.Label>
-														<Col sm={3}>
-															<Form.Control
-																type="number"
-																name="dcSyncWindow"
-																className="form-control-sm"
-																value={values.dcSyncWindow}
-																onChange={handleChange}
-																min={1}
-																max={8}
-															/>
-														</Col>
-													</Form.Group>
-													)}
-													</>
 													)}
 												<Form.Group className="row mb-5">
 														<Col sm={5}>

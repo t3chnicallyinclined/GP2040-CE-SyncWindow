@@ -66,33 +66,66 @@ public:
     void init();
 
     // Handle a Maple Bus command addressed to the VMU sub-peripheral (0x01).
+    // Runs on Core 0 — all functions in this path are RAM-resident.
     // packet points to the full decoded packet (header + payload) in WIRE order.
     // rxLen is the total length in bytes (excluding CRC, already stripped by pollReceive).
     // Returns true if a response was sent.
     bool handleCommand(const uint8_t* packet, uint rxLen, uint8_t port, MapleBus& bus);
 
+    // Execute any pending flash write. Called from Core 1 (processAux) only.
+    // Flash erase+program runs on Core 1 while Core 0 continues handling Maple Bus
+    // from RAM-resident functions — no bus interruption.
+    void doFlashWriteFromCore1();
+
+    // Web UI management API — called from Core 0 webconfig handlers.
+    // These use multicore_lockout to safely perform flash ops from Core 0.
+
+    // Read-only pointer to the VMU flash area via XIP.
+    const uint8_t* getRawPointer() const;
+
+    // Write a single 512-byte block to flash from Core 0.
+    // Uses multicore_lockout to pause Core 1 during the flash operation.
+    void writeBlockWebconfig(uint16_t blockNum, const uint8_t* data);
+
+    // Inject a .dci save file into the VMU filesystem.
+    // dciData: 32-byte dir entry + N×512 block data.
+    // Returns: 0=success, 1=invalid size, 2=no free blocks, 3=no free dir entry
+    int importDCISave(const uint8_t* dciData, size_t dciSize);
+
+    // Wipe and re-format the VMU (webconfig variant — uses alarm callback for flash safety).
+    void formatWebconfig();
+    void formatWebconfig_inner();  // Called from alarm callback — do not call directly
+
     // Debug counters
     uint32_t debugVmuRxCount = 0;
     uint32_t debugVmuTxCount = 0;
     uint32_t debugVmuWriteCount = 0;
-    int8_t   debugVmuLastCmd = -1;     // Last command received by VMU handler
-    uint32_t debugVmuLastError = 0;    // Last FILE_ERROR code sent (0 = none)
-    uint32_t debugVmuLastLocWord = 0;  // Raw location word from last BLOCK_READ/WRITE (wire order)
-    uint32_t debugVmuLastFuncCode = 0; // Raw funcCode from last command with payload (wire order)
-    uint32_t debugVmuRawPayload0 = 0;  // First payload word (raw wire order)
-    uint32_t debugVmuReadOkCount = 0;  // Successful BLOCK_READ responses sent
-    uint32_t debugVmuReadErrCount = 0; // BLOCK_READ FILE_ERROR responses sent
-    uint16_t debugVmuLastBlockOk = 0xFFFF;  // Last block number that was read successfully
-    uint16_t debugVmuLastBlockErr = 0xFFFF; // Last block number that failed
+    int8_t   debugVmuLastCmd = -1;
+    uint32_t debugVmuLastError = 0;
+    uint32_t debugVmuLastLocWord = 0;
+    uint32_t debugVmuLastFuncCode = 0;
+    uint32_t debugVmuRawPayload0 = 0;
+    uint32_t debugVmuReadOkCount = 0;
+    uint32_t debugVmuReadErrCount = 0;
+    uint16_t debugVmuLastBlockOk = 0xFFFF;
+    uint16_t debugVmuLastBlockErr = 0xFFFF;
+    uint32_t debugVmuFlashCount = 0;      // Times flash write executed on Core 1
+    uint16_t debugVmuLastFlashBlock = 0xFFFF; // Last block written to flash
 
     // Command log ring buffer
     VmuLogEntry cmdLog[VMU_LOG_MAX_ENTRIES];
-    uint16_t cmdLogWriteIdx = 0;   // Next write position
-    uint16_t cmdLogCount = 0;      // Total entries written (saturates at 0xFFFF)
+    uint16_t cmdLogWriteIdx = 0;
+    uint16_t cmdLogCount = 0;
     void logCommand(uint8_t cmd, uint8_t response, uint32_t funcCode,
                     uint32_t locWord, uint16_t blockNum, uint8_t phase,
                     uint8_t payloadWords, const uint8_t* rawPayload = nullptr,
                     uint rawPayloadLen = 0);
+
+    // Pending flash write — set by Core 0 after BLOCK_COMPLETE_WRITE ACK,
+    // consumed by Core 1 via doFlashWriteFromCore1().
+    volatile bool pendingFlashWrite = false;
+    uint8_t  pendingWriteData[VMU_BYTES_PER_BLOCK];
+    uint16_t pendingWriteBlockNum = 0;
 
 private:
     // Pre-built packet buffers (wire order, uint32_t arrays)
@@ -102,12 +135,12 @@ private:
     // Write buffer — accumulates one block across 4 write phases
     uint8_t writeBuffer[VMU_BYTES_PER_BLOCK];
 
-    // Flash write target block number (set before calling doFlashWrite)
+    // Flash write target block number
     uint16_t flashWriteBlockNum;
 
-    // Write phase tracking — validates all 4 phases target the same block
-    uint16_t currentWriteBlock;   // Block number being accumulated (0xFFFF = none)
-    uint8_t  writePhaseMask;      // Bitmask of received phases (0x0F = all 4)
+    // Write phase tracking
+    uint16_t currentWriteBlock;
+    uint8_t  writePhaseMask;
 
     // Sector buffer for read-modify-write of 4KB flash sectors
     uint8_t sectorBuffer[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));
@@ -115,31 +148,31 @@ private:
     void buildVMUInfoPacket();
     void buildVMUAckPacket();
 
-    // Read a block from XIP flash (returns pointer to memory-mapped flash)
+    // Read a block from XIP flash
     const uint8_t* readBlock(uint16_t blockNum);
 
-    // Perform flash erase+program for the block in writeBuffer
+    // Perform flash erase+program — called from Core 1 only
     void doFlashWrite();
 
-    // Format empty VMU with filesystem structures (wire-order flash)
+    // Format empty VMU with filesystem structures
     void format();
 
-    // Check if VMU flash area is blank/corrupted (needs full format)
+    // Check if VMU flash area is blank/corrupted
     bool needsFormat();
 
-    // Check if signature is valid but version byte is stale
+    // Check if version byte is stale
     bool needsVersionUpdate();
 
-    // Patch just the version byte in-place (single sector write)
+    // Patch just the version byte in-place
     void patchVersionByte();
 
     // Build media info words (6 words) for GET_MEDIA_INFO response
     void buildMediaInfoForWire(uint32_t* out);
 
-    // Build media info words (6 words) in wire order for system block flash storage
+    // Build media info words (6 words) in wire order for flash storage
     static void buildMediaInfoForFlash(uint32_t* out);
 
-    // Response senders
+    // Response senders — all RAM-resident (hot path on Core 0)
     void sendInfoResponse(uint8_t port, MapleBus& bus);
     void sendMemoryInfoResponse(uint8_t port, MapleBus& bus);
     void sendBlockReadResponse(uint16_t blockNum, uint32_t locWord, uint8_t port, MapleBus& bus);
