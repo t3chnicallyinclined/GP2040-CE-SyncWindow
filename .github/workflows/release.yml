@@ -54,8 +54,7 @@ jobs:
             cmake_extra: ""
           - board: PicoW
             cmake_extra: "-DPICO_BOARD=pico_w"
-          - board: Pico2
-            cmake_extra: "-DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s"
+          # Pico2 (RP2350) removed — untested on RP2350 hardware
 
     steps:
       - name: Setup cmake

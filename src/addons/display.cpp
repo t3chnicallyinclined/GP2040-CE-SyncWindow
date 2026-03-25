@@ -231,10 +231,10 @@ void DisplayAddon::process() {
                     s1s2Toggled = false;
                 } else if (!s1s2Toggled && (time_us_64() - s1s2HoldStart) >= 3000000) {
                     dc->zeroLatencyMode = !dc->zeroLatencyMode;
-                    dc->setFastPath(dc->zeroLatencyMode);
-                    // Persist to flash so it survives reboot
+                    // Update in-memory config so it takes effect immediately.
+                    // Don't write flash here — the ~45ms flash erase stalls Core 0,
+                    // causing the DC to disconnect. Use web UI to persist across reboots.
                     Storage::getInstance().getGamepadOptions().zeroLatencyMode = dc->zeroLatencyMode;
-                    Storage::getInstance().save();
                     s1s2Toggled = true;
                     dcDrawDone = false;  // force redraw
                 }

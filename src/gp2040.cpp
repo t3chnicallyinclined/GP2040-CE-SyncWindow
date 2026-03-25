@@ -372,11 +372,6 @@ void GP2040::run() {
 	}
 
 	while (1) {
-		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
-			dcDriver->process(gamepad);
-			continue;  // Skip rest of loop — ISR already captured fresh GPIO
-		}
-
 		this->getReinitGamepad(gamepad);
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
@@ -407,21 +402,12 @@ void GP2040::run() {
 
 		addons.PreprocessAddons();
 
-		// Check between pipeline steps
-		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
-			dcDriver->process(gamepad);
-		}
-
 		gamepad->hotkey();
 		rebootHotkeys.process(gamepad, false);
 
 		gamepad->process();
 
 		addons.ProcessAddons();
-
-		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
-			dcDriver->process(gamepad);
-		}
 
 		checkProcessedState(processedGamepad->state, gamepad->state);
 
@@ -438,20 +424,11 @@ void GP2040::run() {
 		checkSaveRebootState();
 
 		if (dcMode && dcDriver->zeroLatencyMode) {
-			uint64_t deadline = time_us_64() + 16000;
-			while (time_us_64() < deadline) {
-				if (dcDriver->bus.cmd9PreBuilt) {
-					dcDriver->bus.cmd9PreBuilt = false;
-					dcDriver->bus.clearRxAfterFastPath();
-					dcDriver->bus.sendPacket(dcDriver->controllerPacketBuf, 6);
-					dcDriver->bus.flushRx();
-					deadline = time_us_64() + 16000;
-				}
+			uint64_t nextPipeline = time_us_64() + 16000;
+			while (dcDriver->zeroLatencyMode) {
+				dcDriver->process(gamepad);
+				if (time_us_64() >= nextPipeline) break;
 			}
-			uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-			uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-			dcDriver->cachedJX = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-			dcDriver->cachedJY = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
 		}
 	}
 }

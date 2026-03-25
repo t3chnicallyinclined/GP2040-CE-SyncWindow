@@ -69,11 +69,6 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
 
     buildGpioDcMap();
 
-    irqDriverInstance = this;
-    if (zeroLatencyMode) {
-        bus.enableFastPath(cmd9GpioCapture);
-    }
-
     connected = true;
     return true;
 }
@@ -400,10 +395,6 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
             debugCmd9Count++; debugTxCount++;
         }
         waitTxFlushRx();
-        return;
-    }
-
-    if (zeroLatencyMode && vmuReady) {
         return;
     }
 
