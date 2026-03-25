@@ -25,8 +25,6 @@ void ButtonLayoutScreen::init() {
 
     setViewport((isInputHistoryEnabled ? 8 : 0), 0, (isInputHistoryEnabled ? 56 : getRenderer()->getDriver()->getMetrics()->height), getRenderer()->getDriver()->getMetrics()->width);
 
-	// load layout (drawElement pushes element to the display list)
-    // DC mode: skip widgets — display shows only the status bar text
     if (inputMode != INPUT_MODE_DREAMCAST) {
         uint16_t elementCtr = 0;
         LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
@@ -39,7 +37,6 @@ void ButtonLayoutScreen::init() {
         }
     }
 
-	// start with profile mode displayed (skip in DC mode — draws once then idles)
 	bannerDisplay = (inputMode != INPUT_MODE_DREAMCAST);
     prevProfileNumber = -1;
 
@@ -111,7 +108,6 @@ int8_t ButtonLayoutScreen::update() {
         }
     }
 
-    // main logic loop — skip profile banner in DC mode (display draws once then idles)
     if (prevProfileNumber != profileNumber) {
         prevProfileNumber = profileNumber;
         if (inputMode != INPUT_MODE_DREAMCAST) {
@@ -120,12 +116,10 @@ int8_t ButtonLayoutScreen::update() {
         }
     }
 
-    // main logic loop
 	generateHeader();
     if (isInputHistoryEnabled)
 		processInputHistory();
 
-    // check for exit/screen change
     if (DriverManager::getInstance().isConfigMode()) {
         uint16_t buttonState = getGamepad()->state.buttons;
         if (prevButtonState && !buttonState) {
@@ -213,7 +207,6 @@ void ButtonLayoutScreen::generateHeader() {
             case INPUT_MODE_DREAMCAST: {
                 DreamcastDriver* dc = DriverManager::getInstance().getDCDriver();
                 if (dc) {
-                    // Cache VMU block count — only recalc on flash write
                     static int vmuUsedBlocks = 0;
                     static uint32_t vmuLastFlashCount = 0xFFFFFFFF;
                     if (!dc->disableVMU && dc->vmu.debugVmuFlashCount != vmuLastFlashCount) {
@@ -297,8 +290,6 @@ void ButtonLayoutScreen::generateHeader() {
 }
 
 void ButtonLayoutScreen::drawScreen() {
-    // Dreamcast diagnostic mode — rendered here when enableDiagnostics is on
-    // (toggle is handled in display addon process(), not here)
     DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
 
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver && dcDriver->enableDiagnostics) {
@@ -322,13 +313,11 @@ void ButtonLayoutScreen::drawScreen() {
                  (unsigned long)dc->vmu.debugVmuTxCount);
         getRenderer()->drawText(0, 2, std::string(buf));
 
-        // Show zero latency status in diagnostics view
         getRenderer()->drawText(0, 3, dc->zeroLatencyMode ? "ZL:ON" : "ZL:OFF");
         getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
         return;
     }
 
-    // Standard display path — identical for ALL input modes including Dreamcast
     if (bannerDisplay) {
         getRenderer()->drawRectangle(0, 0, 128, 7, true, true);
     	getRenderer()->drawText(0, 0, statusBar, true);
@@ -336,7 +325,6 @@ void ButtonLayoutScreen::drawScreen() {
 		getRenderer()->drawText(0, 0, statusBar);
 	}
 
-    // Zero Latency persistent status — centered in the middle of the screen
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
         if (dcDriver->zeroLatencyMode) {
             getRenderer()->drawText(0, 3, "   ZERO-LATENCY");

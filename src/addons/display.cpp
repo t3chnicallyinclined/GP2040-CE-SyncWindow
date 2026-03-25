@@ -216,7 +216,6 @@ void DisplayAddon::process() {
             static bool dcDrawDone = false;
             static uint32_t dcLastFlashCount = 0xFFFFFFFF;
 
-            // S1 (Select) hold for 3 seconds toggles diagnostic mode
             static uint64_t s1HoldStart = 0;
             static bool s1Toggled = false;
             Gamepad* gp = Storage::getInstance().GetGamepad();
@@ -235,14 +234,12 @@ void DisplayAddon::process() {
                     s1s2Toggled = true;
                     dcDrawDone = false;  // force redraw
                 }
-                // Block S1-only toggle while both are held
                 s1HoldStart = 0;
                 s1Toggled = true;
             } else {
                 s1s2HoldStart = 0;
             }
 
-            // S1-only hold for 3 seconds toggles diagnostic mode (only if S2 not held)
             if (s1Held && !s2Held) {
                 if (s1HoldStart == 0) {
                     s1HoldStart = time_us_64();

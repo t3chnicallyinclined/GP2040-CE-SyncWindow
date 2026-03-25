@@ -288,18 +288,6 @@ void GP2040::debounceGpioGetAll() {
 	}
 }
 
-/**
- * @brief NOBD sync window — groups near-simultaneous presses onto the same USB frame.
- *
- * Mutually exclusive with stock debounce. When nobdSyncDelay > 0, the main loop calls
- * this INSTEAD of debounceGpioGetAll(). Reads raw GPIO directly and writes debouncedGpio.
- * Includes built-in bounce filtering (sync_new &= raw_buttons drops momentary releases).
- * Releases are always instant. nobdSyncDelay == 0 means this function is never called.
- *
- * All presses wait the full sync window before committing. This ensures transitional
- * finger contacts during wavedashing get accumulated into the existing window rather
- * than creating separate stray single-button presses.
- */
 void GP2040::syncGpioGetAll() {
 	Mask_t raw_gpio = ~gpio_get_all();
 	Gamepad* gamepad = Storage::getInstance().GetGamepad();
@@ -312,14 +300,12 @@ void GP2040::syncGpioGetAll() {
 	static uint64_t sync_start_us  = 0;
 	static Mask_t   sync_new       = 0;
 
-	// Release debounce state
 	static Mask_t   pending_release   = 0;
 	static uint64_t release_start_us  = 0;
 
 	uint64_t now_us = to_us_since_boot(get_absolute_time());
 	uint64_t syncDelay_us = (uint64_t)nobdSyncDelay * 1000;
 
-	// Early return if nothing to process (skip if any window is active)
 	if (!sync_pending && !pending_release &&
 	    gamepad->debouncedGpio == (raw_gpio & buttonGpios)) return;
 
@@ -328,32 +314,24 @@ void GP2040::syncGpioGetAll() {
 	Mask_t just_pressed  = raw_buttons & ~prev & ~sync_new;
 	Mask_t just_released = prev & ~raw_buttons;
 
-	// 1) Handle releases
 	if (releaseDebounce) {
-		// Buffer new releases into pending_release
 		if (just_released) {
 			pending_release |= just_released;
 			if (release_start_us == 0) release_start_us = now_us;
 		}
-		// Cancel pending releases if button bounced back (pressed again)
 		pending_release &= ~raw_buttons;
-		// Commit releases after debounce window expires
 		if (pending_release && (now_us - release_start_us) >= syncDelay_us) {
 			gamepad->debouncedGpio &= ~pending_release;
 			pending_release  = 0;
 			release_start_us = 0;
 		}
-		// If all pending releases were cancelled, reset timer
 		if (!pending_release) release_start_us = 0;
 	} else {
-		// Releases always instant (default behavior)
 		if (just_released) gamepad->debouncedGpio &= ~just_released;
 	}
 
-	// 2) Drop pending presses released before commit (bounce filtering)
 	sync_new &= raw_buttons;
 
-	// 3) All new presses enter the sync window
 	if (just_pressed) {
 		if (!sync_pending) {
 			sync_pending  = true;
@@ -364,7 +342,6 @@ void GP2040::syncGpioGetAll() {
 		}
 	}
 
-	// 4) Commit when window expires (all presses wait full window)
 	if (sync_pending && (now_us - sync_start_us) >= syncDelay_us) {
 		gamepad->debouncedGpio |= sync_new;
 		sync_pending = false;
@@ -377,14 +354,12 @@ void GP2040::run() {
 	Gamepad * processedGamepad = Storage::getInstance().GetProcessedGamepad();
 	GamepadState prevState;
 
-	// Determine output mode — Dreamcast uses Maple Bus (no USB), all others use USB
 	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
 	bool dcMode = (dcDriver != nullptr);
 	bool configMode = false;
 	GPDriver * inputDriver = nullptr;
 
 	if (!dcMode) {
-		// USB modes: initialize TinyUSB, USB Host, and RNDIS for config
 		configMode = DriverManager::getInstance().isConfigMode();
 		inputDriver = DriverManager::getInstance().getDriver();
 		tud_init(TUD_OPT_RHPORT);
@@ -398,15 +373,12 @@ void GP2040::run() {
 		this->getReinitGamepad(gamepad);
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
-		// Input processing: NOBD sync window OR stock debounce (mutually exclusive)
 		if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
 			syncGpioGetAll();
 		} else {
 			debounceGpioGetAll();
 		}
 
-		// Force digital dpad for Dreamcast — DC has digital dpad only.
-		// Must be set BEFORE read() so dpad routing is correct for this frame.
 		if (dcMode) {
 			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
 		}
@@ -415,12 +387,10 @@ void GP2040::run() {
 
 		checkRawState(prevState, gamepad->state);
 
-		// USB Host processing (not used in Dreamcast mode)
 		if (!dcMode) {
 			USBHostManager::getInstance().process();
 		}
 
-		// Config Loop (Web-Config skips Core0 add-ons)
 		if (configMode) {
 			inputDriver->process(gamepad);
 			rebootHotkeys.process(gamepad, configMode);
@@ -428,7 +398,6 @@ void GP2040::run() {
 			continue;
 		}
 
-		// Pre-Process add-ons for MPGS
 		addons.PreprocessAddons();
 
 		gamepad->hotkey();
@@ -436,15 +405,12 @@ void GP2040::run() {
 
 		gamepad->process();
 
-		// (Post) Process for add-ons
 		addons.ProcessAddons();
 
 		checkProcessedState(processedGamepad->state, gamepad->state);
 
-		// Copy Processed Gamepad for Core1 (race condition otherwise)
 		memcpy(&processedGamepad->state, &gamepad->state, sizeof(GamepadState));
 
-		// Output dispatch: Dreamcast Maple Bus or USB driver
 		if (dcMode) {
 			dcDriver->process(gamepad);
 		} else {

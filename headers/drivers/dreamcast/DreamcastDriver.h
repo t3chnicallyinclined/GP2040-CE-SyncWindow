@@ -7,7 +7,6 @@
 
 class Gamepad;
 
-// DC button masks (inverted: 0=pressed, 1=released)
 #define DC_BTN_C      0x0001
 #define DC_BTN_B      0x0002
 #define DC_BTN_A      0x0004
@@ -26,16 +25,15 @@ public:
 
     bool init(uint pin_a, uint pin_b);
     void process(Gamepad* gamepad);
-    virtual void processAux();  // Called from Core 1 — executes pending VMU flash writes
+    virtual void processAux();
     bool isConnected() { return connected; }
 
-    // Master diagnostics flag — when false, zero debug overhead in hot path.
-    // Toggled by S1 (Select) on the OLED display.
     bool enableDiagnostics = false;
-
     bool zeroLatencyMode = false;
 
-    // Debug counters (only updated when enableDiagnostics == true)
+    volatile uint8_t cachedJX = 0x80;
+    volatile uint8_t cachedJY = 0x80;
+
     uint32_t debugRxCount = 0;
     uint32_t debugTxCount = 0;
     uint32_t debugXorFail = 0;
@@ -45,32 +43,24 @@ public:
     uint32_t debugMaxConsecutivePolls = 0;
     uint32_t debugResendCount = 0;
 
-    // VMU disable flag — loaded from config in init()
     bool disableVMU = false;
-
-    // VMU ready gate — don't process VMU commands until we've confirmed
-    // the RX decoder is aligned via a successful controller DEVICE_REQUEST.
     bool vmuReady = false;
 
-    // VMU sub-peripheral (public for debug display and webconfig access)
     DreamcastVMU vmu;
 
-    // Zero Latency: GPIO pin → DC button mapping (built at init time)
-    // Index = GPIO pin number, value = DC button mask bit to CLEAR when pressed
-    uint16_t gpioDcButtonMap[30];  // NUM_BANK0_GPIOS = 30
-    uint32_t triggerLTMask;       // Bitmask: which GPIO pin(s) map to LT
-    uint32_t triggerRTMask;       // Bitmask: which GPIO pin(s) map to RT
-    uint32_t buttonGpioMask;      // Bitmask of all GPIO pins that are buttons
-    void buildGpioDcMap();        // Build the mapping table from current pin config
+    uint16_t gpioDcButtonMap[30];
+    uint32_t triggerLTMask;
+    uint32_t triggerRTMask;
+    uint32_t buttonGpioMask;
+    void buildGpioDcMap();
+
+    MapleBus bus;
+    uint32_t controllerPacketBuf[6];
 
 private:
-    MapleBus bus;
-
-    // Pre-built packet buffers (wire/network byte order, uint32_t arrays)
-    uint32_t infoPacketBuf[31];       // bitpairs + header + 28 device info words + CRC
-    uint32_t controllerPacketBuf[6];  // bitpairs + header + funcCode + 2 condition words + CRC
-    uint32_t ackPacketBuf[3];         // bitpairs + header + CRC
-    uint32_t resendPacketBuf[3];      // bitpairs + header + CRC
+    uint32_t infoPacketBuf[31];
+    uint32_t ackPacketBuf[3];
+    uint32_t resendPacketBuf[3];
 
     bool connected;
     uint8_t lastPort;
@@ -88,5 +78,8 @@ private:
     void sendUnknownCommandResponse();
     void waitTxFlushRx();
     uint16_t mapButtonsToDC(uint32_t gpButtons, uint8_t dpad);
+
+public:
+    // Public for ISR fast-path callback access
     uint16_t mapRawGpioToDC(uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT);
 };
