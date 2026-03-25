@@ -37,6 +37,8 @@ https://github.com/user-attachments/assets/a56967f7-1b35-4f8f-9fda-de62dac0b089
 
 Open the web UI: hold **S2** on boot → navigate to `http://192.168.7.1` → **Settings**
 
+![NOBD Sync Window](docs/images/nobd-sync-gamepad-settings.png)
+
 | Mode | What it does |
 |------|-------------|
 | **NOBD Sync Window** | Groups near-simultaneous presses. Default: 5ms |
@@ -45,6 +47,7 @@ Open the web UI: hold **S2** on boot → navigate to `http://192.168.7.1` → **
 **Recommended:** Start at 5ms. If you still drop dashes occasionally, try 6–8ms.
 
 A **Release Debounce** checkbox appears in NOBD mode — enables bounce filtering on button release. Off by default. Useful for rhythm games where release bounce causes phantom inputs, not needed for fighting games.
+
 
 ---
 
