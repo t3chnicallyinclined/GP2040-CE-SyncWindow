@@ -5,8 +5,8 @@
 A fork of GP2040-CE v0.7.12 that adds **NOBD (No OBD)** — a firmware-level sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for fighting game players who need reliable dashes, throw techs, and multi-button inputs without resorting to OBD (One Button Dash) macros.
 
 **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
-**Current release:** v0.7.12-nobd-18
-**Boards:** RP2040AdvancedBreakoutBoard, Pico, PicoW, Pico2
+**Current release:** v0.7.12-nobd-19
+**Boards:** RP2040AdvancedBreakoutBoard, Pico, PicoW (RP2040 only — Pico2/RP2350 untested, removed from releases)
 
 For anything not NOBD-specific (pin mapping, addons, SOCD, display, USB modes, etc.), refer to the upstream GP2040-CE docs: https://gp2040-ce.info/
 
@@ -175,7 +175,9 @@ gh release create v0.7.12-nobd-X release/GP2040-CE-NOBD_0.7.12_*.uf2 --title "Ti
 
 ## Expert Domain Knowledge
 
-For deep context on fighting game mechanics, game engine input systems, and RP2040 firmware internals, see **[`docs/NOBD-EXPERT-CONTEXT.md`](docs/NOBD-EXPERT-CONTEXT.md)**.
+For complete expert context — every subsystem, architecture, protocol details, byte order rules, debugging history, build/release workflow, web UI modification guide, and fighting game domain knowledge — see **[`docs/EXPERT-CONTEXT.md`](docs/EXPERT-CONTEXT.md)**.
+
+This single file replaces the previously separate `docs/NOBD-EXPERT-CONTEXT.md`, `docs/dreamcast_maple_expert.md`, and `docs/vmu_expert_reference.md`.
 
 ---
 

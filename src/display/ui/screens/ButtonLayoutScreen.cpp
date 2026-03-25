@@ -313,8 +313,20 @@ void ButtonLayoutScreen::drawScreen() {
                  (unsigned long)dc->vmu.debugVmuTxCount);
         getRenderer()->drawText(0, 2, std::string(buf));
 
-        getRenderer()->drawText(0, 3, dc->zeroLatencyMode ? "ZL:ON" : "ZL:OFF");
-        getRenderer()->drawText(0, 4, "Hold S1 3s to exit");
+        // Line 3: response time (packet arrival → sendPacket)
+        {
+            const char* mode = dc->zeroLatencyMode ? "ZL" : "STD";
+            uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
+            snprintf(buf, sizeof(buf), "%s:%lu-%luus n:%lu",
+                     mode,
+                     (unsigned long)rMin, (unsigned long)dc->respMax,
+                     (unsigned long)dc->respCount);
+        }
+        getRenderer()->drawText(0, 3, std::string(buf));
+
+        // Line 4: cmd9 count
+        snprintf(buf, sizeof(buf), "cmd9:%lu", (unsigned long)dc->debugCmd9Count);
+        getRenderer()->drawText(0, 4, std::string(buf));
         return;
     }
 

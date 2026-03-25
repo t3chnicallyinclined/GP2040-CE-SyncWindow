@@ -9,6 +9,11 @@
 #include <string.h>
 #include "hardware/pio.h"
 #include "hardware/dma.h"
+#include "hardware/irq.h"
+
+// Forward declaration for fast-path callback type
+class MapleBus;
+typedef void (*MapleFastPathCallback)(uint32_t hdr, MapleBus* bus);
 
 // Maple Bus addressing
 #define MAPLE_DC_ADDR        0x00
@@ -114,11 +119,32 @@ public:
 
     PIO getRxPio() { return rxPio; }
     PIO getTxPio() { return txPio; }
+    uint getRxSm() { return rxSm; }
+
+    // Clear PIO RX state after ISR fast-path consumed the packet.
+    // Must be called before sendPacket() so flushRx() → startRx() properly restarts.
+    void clearRxAfterFastPath();
 
     // Check if last pollReceive() detected a corrupt packet (CRC fail or numWords mismatch).
     // Caller should send REQUEST_RESEND (cmd -4) when this returns true.
     // Automatically clears the flag after reading.
     bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
+
+    // Level 3.5 fast-path: ISR captures GPIO + builds response, main loop sends.
+    // Set by ISR when a valid CMD 9 packet is received and response is pre-built.
+    volatile bool cmd9PreBuilt = false;
+
+    // Packet arrival timestamp — set when end-of-packet IRQ flag is first detected.
+    // Used for apples-to-apples response time comparison between STD and ZL modes.
+    volatile uint32_t rxArrivalTimestamp = 0;
+
+    // Fast-path callback: called from ISR to capture GPIO and build response.
+    // Must be __no_inline_not_in_flash_func. Set by DreamcastDriver::init().
+    MapleFastPathCallback fastPathCallback = nullptr;
+
+    // Enable/disable the PIO IRQ fast path (gated by zeroLatencyMode)
+    void enableFastPath(MapleFastPathCallback callback);
+    void disableFastPath();
 
     // Debug counters (only updated when enableDiagnostics == true)
     bool enableDiagnostics = false;
@@ -130,6 +156,13 @@ public:
     uint32_t debugEndIrqCount = 0;
     uint32_t debugNumWordsMismatch = 0;
 
+    // RX DMA buffer — public for ISR read access (Level 3.5 fast path).
+    // maple_rx PIO produces 32 decoded data bits per FIFO word (= 4 payload bytes).
+    // NO DMA bswap — data stays in wire (network) byte order as received by PIO.
+    uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));
+    uint32_t rxDmaInitCount;  // Initial DMA transfer count (for computing words received)
+    uint rxDmaChannel;
+
 private:
     PIO txPio;
     PIO rxPio;
@@ -138,22 +171,16 @@ private:
     uint rxSm;
     uint rxSmOffset;  // RX program offset (needed for SM restart)
     uint txDmaChannel;
-    uint rxDmaChannel;
     uint pinA;
     uint pinB;
 
     bool initialized;
+    bool fastPathEnabled = false;
     bool lastRxWasCorrupt = false;  // Set by pollReceive() on CRC/numWords failure
 
-    // RX DMA linear buffer — filled by DMA during one packet reception.
-    // maple_rx PIO produces 32 decoded data bits per FIFO word (= 4 payload bytes).
-    // NO DMA bswap — data stays in wire (network) byte order as received by PIO.
-    // Reset and restarted for each new packet.
-    uint32_t rxDmaBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));
     // Validated packet buffer — data is copied here before returning to caller.
     // This prevents the DMA from overwriting the packet while the caller processes it.
     uint32_t rxPacketBuf[MAPLE_RX_DMA_BUF_WORDS] __attribute__((aligned(4)));
-    uint32_t rxDmaInitCount;  // Initial DMA transfer count (for computing words received)
 
     // Timestamp for stale-data timeout
     uint64_t rxStartTimeUs;

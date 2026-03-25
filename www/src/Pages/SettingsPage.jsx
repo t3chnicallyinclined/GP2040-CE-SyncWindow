@@ -1586,6 +1586,23 @@ export default function SettingsPage() {
 																/>
 															</Col>
 														</Form.Group>
+														{(values.dreamcastPinA >= 255 || values.dreamcastPinB >= 255) && (
+															<div className="alert alert-warning mb-3" style={{fontSize: '0.85em'}}>
+																<strong>{t('SettingsPage:dreamcast-pins-unconfigured-title')}</strong>{' '}
+																{t('SettingsPage:dreamcast-pins-unconfigured')}
+															</div>
+														)}
+														<div className="text-muted mb-3" style={{fontSize: '0.85em'}}>
+															<strong>{t('SettingsPage:dreamcast-pins-note-title')}</strong>{' '}
+															{t('SettingsPage:dreamcast-pins-note')}
+															<ul className="mt-1 mb-0">
+																<li>{t('SettingsPage:dreamcast-pins-board-abbb')}</li>
+																<li>{t('SettingsPage:dreamcast-pins-board-pico')}</li>
+																<li>{t('SettingsPage:dreamcast-pins-board-picow')}</li>
+																<li>{t('SettingsPage:dreamcast-pins-board-pico2')}</li>
+															</ul>
+															<span className="text-danger">{t('SettingsPage:dreamcast-pins-warning')}</span>
+														</div>
 														<Form.Group className="row mb-3">
 															<Col>
 																<p className="mb-1"><strong>{t('SettingsPage:vmu-manager-label')}</strong></p>

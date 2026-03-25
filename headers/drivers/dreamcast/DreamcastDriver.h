@@ -30,10 +30,13 @@ public:
 
     bool enableDiagnostics = false;
     bool zeroLatencyMode = false;
+    void setFastPath(bool enable);
 
+    // Cached analog values for ISR access (ZL mode)
     volatile uint8_t cachedJX = 0x80;
     volatile uint8_t cachedJY = 0x80;
 
+    // Debug counters (only updated when enableDiagnostics == true)
     uint32_t debugRxCount = 0;
     uint32_t debugTxCount = 0;
     uint32_t debugXorFail = 0;
@@ -43,11 +46,19 @@ public:
     uint32_t debugMaxConsecutivePolls = 0;
     uint32_t debugResendCount = 0;
 
+    // Response timing (only updated when enableDiagnostics == true)
+    // Measures from packet arrival (rxArrivalTimestamp) to sendPacket()
+    volatile uint32_t respLast = 0;       // Last response time in µs
+    volatile uint32_t respMin = 0xFFFFFFFF;
+    volatile uint32_t respMax = 0;
+    volatile uint32_t respCount = 0;
+
     bool disableVMU = false;
     bool vmuReady = false;
 
     DreamcastVMU vmu;
 
+    // Zero Latency: GPIO pin → DC button mapping (built at init time)
     uint16_t gpioDcButtonMap[30];
     uint32_t triggerLTMask;
     uint32_t triggerRTMask;
@@ -56,6 +67,9 @@ public:
 
     MapleBus bus;
     uint32_t controllerPacketBuf[6];
+
+    // Public for ISR fast-path callback access
+    uint16_t mapRawGpioToDC(uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT);
 
 private:
     uint32_t infoPacketBuf[31];
@@ -78,8 +92,4 @@ private:
     void sendUnknownCommandResponse();
     void waitTxFlushRx();
     uint16_t mapButtonsToDC(uint32_t gpButtons, uint8_t dpad);
-
-public:
-    // Public for ISR fast-path callback access
-    uint16_t mapRawGpioToDC(uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT);
 };

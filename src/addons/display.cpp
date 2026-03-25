@@ -231,6 +231,7 @@ void DisplayAddon::process() {
                     s1s2Toggled = false;
                 } else if (!s1s2Toggled && (time_us_64() - s1s2HoldStart) >= 3000000) {
                     dc->zeroLatencyMode = !dc->zeroLatencyMode;
+                    dc->setFastPath(dc->zeroLatencyMode);
                     s1s2Toggled = true;
                     dcDrawDone = false;  // force redraw
                 }

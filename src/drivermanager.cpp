@@ -78,8 +78,15 @@ void DriverManager::setup(InputMode mode) {
         case INPUT_MODE_DREAMCAST: {
             driver = nullptr; // Dreamcast uses Maple Bus, not USB
             GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
-            dcDriver = new DreamcastDriver();
-            dcDriver->init(opts.dreamcastPinA, opts.dreamcastPinB);
+            // Pins 0xFF = unconfigured (board has no DC pin defaults).
+            // Don't init the driver — it stays nullptr so process() calls are skipped.
+            if (opts.dreamcastPinA < NUM_BANK0_GPIOS && opts.dreamcastPinB < NUM_BANK0_GPIOS) {
+                dcDriver = new DreamcastDriver();
+                if (!dcDriver->init(opts.dreamcastPinA, opts.dreamcastPinB)) {
+                    delete dcDriver;
+                    dcDriver = nullptr;
+                }
+            }
             inputMode = mode;
             return;
         }

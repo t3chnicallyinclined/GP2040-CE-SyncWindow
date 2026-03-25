@@ -4,7 +4,15 @@
 #include "storagemanager.h"
 #include "pico/time.h"
 #include "hardware/gpio.h"
+#include "hardware/timer.h"
 
+// ============================================================
+// Level 3.5: ISR GPIO capture callback
+// Called from mapleRxIrqHandler when a valid CMD 9 is received.
+// Reads GPIO at the freshest moment and pre-builds the response.
+// Does NOT send — main loop handles TX for sequential safety.
+// ZERO overhead when diagnostics are off (no timer reads).
+// ============================================================
 static DreamcastDriver* irqDriverInstance = nullptr;
 
 static void __no_inline_not_in_flash_func(cmd9GpioCapture)(uint32_t hdr, MapleBus* bus) {
@@ -74,6 +82,18 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
 
     connected = true;
     return true;
+}
+
+void DreamcastDriver::setFastPath(bool enable) {
+    // Reset timing stats on mode change
+    respLast = 0; respMin = 0xFFFFFFFF; respMax = 0; respCount = 0;
+
+    if (enable) {
+        irqDriverInstance = this;
+        bus.enableFastPath(cmd9GpioCapture);
+    } else {
+        bus.disableFastPath();
+    }
 }
 
 void DreamcastDriver::buildGpioDcMap() {
@@ -375,9 +395,27 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
 
     if (bus.cmd9PreBuilt) {
         bus.cmd9PreBuilt = false;
+        bus.clearRxAfterFastPath();
         bus.sendPacket(controllerPacketBuf, 6);
+        if (diag) {
+            uint32_t elapsed = timer_hw->timerawl - bus.rxArrivalTimestamp;
+            respLast = elapsed;
+            if (elapsed < respMin) respMin = elapsed;
+            if (elapsed > respMax) respMax = elapsed;
+            respCount++;
+            debugCmd9Count++; debugTxCount++;
+        }
         waitTxFlushRx();
-        if (diag) { debugCmd9Count++; debugTxCount++; }
+        return;
+    }
+
+    // In ZL mode, CMD 9 is handled by the ISR fast path.
+    // Only fall through to pollReceive for non-CMD-9 packets (VMU, device info).
+    // If cmd9PreBuilt was false and we're in ZL mode, the ISR hasn't fired yet —
+    // don't race it with pollReceive. Just return and let the ISR handle it next time.
+    // Exception: we still need pollReceive for CMD 1 (device info) at connection time,
+    // so only skip once vmuReady is true (meaning we've already connected).
+    if (zeroLatencyMode && vmuReady) {
         return;
     }
 
@@ -393,6 +431,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
     }
 
     if (gotPacket && rxLen >= 4) {
+
         uint32_t hdrWord = ((const uint32_t*)packet)[0];
         int8_t cmd = maple_hdr_command(hdrWord);
         uint8_t destAddr = maple_hdr_dest(hdrWord) & MAPLE_PERIPH_MASK;
@@ -431,10 +470,17 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
                 break;
 
             case MAPLE_CMD_GET_CONDITION:
-                if (diag) { debugCmd9Count++; debugConsecutivePolls++; }
                 sendControllerState(gamepad);
+                if (diag) {
+                    uint32_t elapsed = timer_hw->timerawl - bus.rxArrivalTimestamp;
+                    respLast = elapsed;
+                    if (elapsed < respMin) respMin = elapsed;
+                    if (elapsed > respMax) respMax = elapsed;
+                    respCount++;
+                    debugCmd9Count++; debugConsecutivePolls++;
+                    debugTxCount++;
+                }
                 waitTxFlushRx();
-                if (diag) debugTxCount++;
                 break;
 
             case MAPLE_CMD_RESET_DEVICE:

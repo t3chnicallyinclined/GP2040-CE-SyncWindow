@@ -25,4 +25,7 @@ www/src_gen/enums.ts
 # External hardware reference
 Hardware/
 
+# Internal branding/marketing (not for public repo)
+branding/
+
 

@@ -306,8 +306,17 @@ void ConfigUtils::initUnsetPropertiesWithDefaults(Config& config)
     INIT_UNSET_PROPERTY(config.gamepadOptions, debounceDelay, DEFAULT_DEBOUNCE_DELAY);
     INIT_UNSET_PROPERTY(config.gamepadOptions, nobdSyncDelay, DEFAULT_NOBD_SYNC_DELAY);
     INIT_UNSET_PROPERTY(config.gamepadOptions, nobdReleaseDebounce, false);
-    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinA, 23);
-    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinB, 24);
+    // Per-board Dreamcast pin defaults — boards that support DC define these
+    // in BoardConfig.h. All others default to 0xFF (unconfigured/disabled)
+    // to prevent initializing PIO on unsafe pins (e.g. SMPS/VBUS on Pico).
+    #ifndef DEFAULT_DREAMCAST_PIN_A
+    #define DEFAULT_DREAMCAST_PIN_A 0xFF
+    #endif
+    #ifndef DEFAULT_DREAMCAST_PIN_B
+    #define DEFAULT_DREAMCAST_PIN_B 0xFF
+    #endif
+    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinA, DEFAULT_DREAMCAST_PIN_A);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinB, DEFAULT_DREAMCAST_PIN_B);
     INIT_UNSET_PROPERTY(config.gamepadOptions, dcSyncMode, 0);    // DC_SYNC_OFF (raw passthrough)
     INIT_UNSET_PROPERTY(config.gamepadOptions, disableVMU, false);
     INIT_UNSET_PROPERTY(config.gamepadOptions, inputModeB1, DEFAULT_INPUT_MODE_B1);

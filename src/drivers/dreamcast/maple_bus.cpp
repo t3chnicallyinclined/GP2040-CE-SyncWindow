@@ -7,6 +7,44 @@
 // Maple Bus transport layer — wire-order architecture (NO DMA bswap).
 // Based on MaplePad by mackieks (github.com/mackieks/MaplePad).
 
+// ============================================================
+// Level 3.5 Fast Path — ISR captures GPIO on end-of-packet
+// ============================================================
+static MapleBus* irqBusInstance = nullptr;
+
+static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
+    MapleBus* bus = irqBusInstance;
+    if (!bus || !bus->fastPathCallback) return;
+
+    // Timestamp packet arrival (diagnostics only — zero overhead when off)
+    if (bus->enableDiagnostics) bus->rxArrivalTimestamp = timer_hw->timerawl;
+
+    // Validate packet: CMD 9 is 3 words (header + funcCode + CRC)
+    uint32_t remaining = dma_channel_hw_addr(bus->rxDmaChannel)->transfer_count;
+    uint32_t wordsReceived = bus->rxDmaInitCount - remaining;
+
+    if (wordsReceived >= 3) {
+        uint32_t hdr = bus->rxDmaBuf[0];
+        int8_t cmd = maple_hdr_command(hdr);
+
+        if (cmd == MAPLE_CMD_GET_CONDITION) {
+            // CRC validation: XOR header + payload, fold to 8-bit, compare
+            uint32_t xorAll = bus->rxDmaBuf[0] ^ bus->rxDmaBuf[1];
+            uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+            uint8_t expected = (bus->rxDmaBuf[2] >> 24) & 0xFF;
+
+            if (crc == expected) {
+                // CRC valid — capture GPIO and pre-build response (no TX!)
+                bus->fastPathCallback(hdr, bus);
+                bus->cmd9PreBuilt = true;
+                return;
+            }
+        }
+    }
+
+    // Not CMD 9 or CRC failed — main loop handles via pollReceive()
+}
+
 MapleBus::MapleBus()
     : txPio(pio0), rxPio(pio1), txSm(0), txSmOffset(0), rxSm(0), rxSmOffset(0),
       txDmaChannel(0), rxDmaChannel(0),
@@ -206,7 +244,10 @@ bool __no_inline_not_in_flash_func(MapleBus::pollReceive)(const uint8_t** outPac
     bool endOfPacket = (rxPio->irq & (1u << rxSm)) != 0;
 
     if (endOfPacket) {
-        if (enableDiagnostics) debugEndIrqCount++;
+        if (enableDiagnostics) {
+            rxArrivalTimestamp = timer_hw->timerawl;
+            debugEndIrqCount++;
+        }
 
         // Wait up to 1ms for DMA to fully drain the RX FIFO.
         // Critical: we must NOT read transfer_count while DMA is still active —
@@ -321,4 +362,42 @@ uint32_t __no_inline_not_in_flash_func(MapleBus::calcBitPairs)(uint packetSize) 
     // But CRC is only 1 byte on wire, not 4. So wire bytes = packetSize - 4 (prefix) - 3 (unused CRC padding).
     // Bit pairs = (packetSize - 7) * 4. Minus 1 for PIO loop counter.
     return (packetSize - 7) * 4 - 1;
+}
+
+void MapleBus::enableFastPath(MapleFastPathCallback callback) {
+    if (fastPathEnabled || !initialized) return;
+
+    fastPathCallback = callback;
+    irqBusInstance = this;
+    cmd9PreBuilt = false;
+
+    // Enable PIO IRQ for end-of-packet notification.
+    // maple_rx uses `irq wait 0 rel` — SM-relative IRQ 0 maps to PIO IRQ rxSm.
+    uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+    pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), true);
+    irq_set_exclusive_handler(irqNum, mapleRxIrqHandler);
+    irq_set_priority(irqNum, 0);  // Highest priority
+    irq_set_enabled(irqNum, true);
+
+    fastPathEnabled = true;
+}
+
+void MapleBus::disableFastPath() {
+    if (!fastPathEnabled) return;
+
+    uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+    irq_set_enabled(irqNum, false);
+    pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), false);
+
+    fastPathCallback = nullptr;
+    irqBusInstance = nullptr;
+    cmd9PreBuilt = false;
+    fastPathEnabled = false;
+}
+
+void __no_inline_not_in_flash_func(MapleBus::clearRxAfterFastPath)() {
+    // After ISR consumed the packet, PIO RX SM is stalled at `irq wait 0 rel`.
+    // Disable SM and clear IRQ so sendPacket() → flushRx() → startRx() can restart cleanly.
+    pio_sm_set_enabled(rxPio, rxSm, false);
+    pio_interrupt_clear(rxPio, rxSm);
 }

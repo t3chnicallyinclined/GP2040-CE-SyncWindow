@@ -221,7 +221,9 @@ void GP2040::initializeStandardGpio() {
 	// Boot action override to DC mode will re-init GPIO via getReinitGamepad().
 	uint32_t reservedPins = 0;
 	const GamepadOptions& gpOpts = Storage::getInstance().getGamepadOptions();
-	if (gpOpts.inputMode == INPUT_MODE_DREAMCAST) {
+	if (gpOpts.inputMode == INPUT_MODE_DREAMCAST &&
+	    gpOpts.dreamcastPinA < NUM_BANK0_GPIOS &&
+	    gpOpts.dreamcastPinB < NUM_BANK0_GPIOS) {
 		reservedPins |= (1u << gpOpts.dreamcastPinA) | (1u << gpOpts.dreamcastPinB);
 	}
 
@@ -370,6 +372,13 @@ void GP2040::run() {
 	}
 
 	while (1) {
+		// ZL fast path: check if ISR has a pre-built CMD 9 response before doing anything else.
+		// This minimizes the gap between ISR firing and response being sent.
+		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
+			dcDriver->process(gamepad);
+			continue;  // Skip rest of loop — ISR already captured fresh GPIO
+		}
+
 		this->getReinitGamepad(gamepad);
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
@@ -400,12 +409,21 @@ void GP2040::run() {
 
 		addons.PreprocessAddons();
 
+		// ZL: check between every pipeline step to minimize spike
+		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
+			dcDriver->process(gamepad);
+		}
+
 		gamepad->hotkey();
 		rebootHotkeys.process(gamepad, false);
 
 		gamepad->process();
 
 		addons.ProcessAddons();
+
+		if (dcMode && dcDriver->bus.cmd9PreBuilt) {
+			dcDriver->process(gamepad);
+		}
 
 		checkProcessedState(processedGamepad->state, gamepad->state);
 
@@ -422,13 +440,24 @@ void GP2040::run() {
 		checkSaveRebootState();
 
 		if (dcMode && dcDriver->zeroLatencyMode) {
-			uint64_t nextPipeline = time_us_64() + 16000;
-			while (dcDriver->zeroLatencyMode) {
-				dcDriver->process(gamepad);
-				if (time_us_64() >= nextPipeline) {
-					break;
+			// Ultra-tight spin: bypass process() entirely.
+			// ISR already built the packet — just send it.
+			// Only check the flag + send. Zero unnecessary work.
+			uint64_t deadline = time_us_64() + 16000;
+			while (time_us_64() < deadline) {
+				if (dcDriver->bus.cmd9PreBuilt) {
+					dcDriver->bus.cmd9PreBuilt = false;
+					dcDriver->bus.clearRxAfterFastPath();
+					dcDriver->bus.sendPacket(dcDriver->controllerPacketBuf, 6);
+					dcDriver->bus.flushRx();
+					deadline = time_us_64() + 16000;
 				}
 			}
+			// Update analog cache once per pipeline pass (not per spin)
+			uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+			uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+			dcDriver->cachedJX = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+			dcDriver->cachedJY = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
 		}
 	}
 }
