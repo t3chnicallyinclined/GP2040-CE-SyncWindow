@@ -292,6 +292,9 @@ void ButtonLayoutScreen::drawScreen() {
         auto* dc = dcDriver;
         char buf[64];
 
+        // Clear widget remnants before drawing diagnostics
+        getRenderer()->clearScreen();
+
         snprintf(buf, sizeof(buf), "Rx:%lu Tx:%lu XF:%lu",
                  (unsigned long)dc->debugRxCount,
                  (unsigned long)dc->debugTxCount,
@@ -324,6 +327,11 @@ void ButtonLayoutScreen::drawScreen() {
                  (unsigned long)dc->debugTableHits,
                  (unsigned long)dc->bus.debugIsrFallthrough);
         getRenderer()->drawText(0, 4, std::string(buf));
+
+        // Line 5: DC always uses ZL (raw passthrough, forced in main loop)
+        snprintf(buf, sizeof(buf), "ZL Mode (forced)");
+        getRenderer()->drawText(0, 5, std::string(buf));
+
         return;
     }
 

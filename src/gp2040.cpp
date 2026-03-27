@@ -375,14 +375,15 @@ void GP2040::run() {
 		this->getReinitGamepad(gamepad);
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
-		if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
+		if (dcMode) {
+			// DC polls at 60Hz (16.67ms) — switch bounce (1-5ms) settles
+			// long before the next poll. Always use raw passthrough.
+			gamepad->debouncedGpio = ~gpio_get_all();
+			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
+		} else if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
 			syncGpioGetAll();
 		} else {
 			debounceGpioGetAll();
-		}
-
-		if (dcMode) {
-			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
 		}
 
 		gamepad->read();
@@ -426,7 +427,7 @@ void GP2040::run() {
 		// DC mode: ISR handles all commands. Main loop just keeps
 		// lookup table + analog current and does ISR TX cleanup.
 		if (dcMode) {
-			dcDriver->updateCmd9FromGpio();
+			dcDriver->updateCmd9FromGpio(gamepad->debouncedGpio);
 			dcDriver->updateAnalogFromGamepad(gamepad);
 		}
 	}

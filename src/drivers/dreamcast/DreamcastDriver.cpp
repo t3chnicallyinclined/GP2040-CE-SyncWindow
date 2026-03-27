@@ -324,11 +324,12 @@ void DreamcastDriver::rebuildCmd9LookupTableForPort() {
     cmd9ReadyW5 = cmd9TableW5[index];
 }
 
-void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)() {
-    uint32_t raw = ~gpio_get_all();
+void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)(uint32_t filteredGpio) {
+    if (filteredGpio == lastFilteredGpio) return;
+    lastFilteredGpio = filteredGpio;
     uint32_t index = 0;
     for (uint8_t b = 0; b < cmd9NumBits; b++) {
-        if (raw & (1u << cmd9GpioPins[b])) {
+        if (filteredGpio & (1u << cmd9GpioPins[b])) {
             index |= (1u << b);
         }
     }

@@ -225,7 +225,7 @@ void DisplayAddon::process() {
             static uint64_t s1s2HoldStart = 0;
             static bool s1s2Toggled = false;
 
-            // S1+S2 hold: reserved (ZL mode is always on in full ISR architecture)
+            // S1+S2 hold: reserved
             if (s1Held && s2Held) {
                 s1HoldStart = 0;
                 s1Toggled = true;

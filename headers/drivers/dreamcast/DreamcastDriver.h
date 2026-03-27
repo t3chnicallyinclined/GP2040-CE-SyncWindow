@@ -69,9 +69,10 @@ public:
     uint8_t   cmd9NumBits = 0;
     volatile uint32_t cmd9ReadyW3;
     volatile uint32_t cmd9ReadyW5;          // Pre-computed CRC for current button state
+    uint32_t lastFilteredGpio = 0xFFFFFFFF; // Cache for early-return in updateCmd9FromGpio
     void buildCmd9LookupTable();
     void rebuildCmd9LookupTableForPort();   // Rebuild with real port after CMD1
-    void updateCmd9FromGpio();
+    void updateCmd9FromGpio(uint32_t filteredGpio);
     void updateAnalogFromGamepad(Gamepad* gamepad);
 
     // Cached port from CMD1 — never changes after initial handshake.
