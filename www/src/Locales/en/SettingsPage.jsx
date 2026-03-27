@@ -199,7 +199,4 @@ export default {
 	'vmu-manager-label': 'VMU Manager',
 	'vmu-manager-description': 'Download or upload VMU save data, or format the VMU.',
 	'vmu-manager-link': 'Go to VMU Manager →',
-	'zero-latency-label': 'Zero Latency Mode ⚡',
-	'zero-latency-description': 'Reads buttons at the exact microsecond the Dreamcast polls. No cached data, no stale inputs. Overrides the input timing mode above.',
-	'zero-latency-tradeoffs': 'Bypasses SOCD cleaning, button remapping, turbo, and macros — reads raw GPIO directly. Not recommended for hitbox/all-button controllers. OLED updates less frequently. VMU save/load requires disabling this mode first. Toggle on-device: hold Select+Start for 3 seconds.',
 };

@@ -245,14 +245,8 @@ void DisplayAddon::process() {
                 s1HoldStart = 0;
             }
 
-            if (!dc->enableDiagnostics) {
-                uint32_t currentFlash = dc->vmu.debugVmuFlashCount;
-                if (dcDrawDone && currentFlash == dcLastFlashCount) {
-                    return;  // Idle — skip draw entirely
-                }
-                dcLastFlashCount = currentFlash;
-                dcDrawDone = true;
-            }
+            // ISR handles all Maple Bus commands — display is free to run
+            // at full speed without affecting response latency.
         }
     }
 

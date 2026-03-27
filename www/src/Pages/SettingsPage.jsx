@@ -461,8 +461,8 @@ const schema = yup.object().shape({
 	nobdReleaseDebounce: yup.number().label('NOBD Release Debounce'),
 	dreamcastPinA: yup.number().min(0).max(29).label('Dreamcast Pin A'),
 	dreamcastPinB: yup.number().min(0).max(29).label('Dreamcast Pin B'),
-	zeroLatencyMode: yup.number().label('Zero Latency Mode'),
 	// dcSyncMode: removed from UI — always Off (raw passthrough like real DC hardware)
+	// zeroLatencyMode: removed — ISR handles all DC commands, always on
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
 	inputModeB1: yup
 		.number()
@@ -1765,7 +1765,7 @@ export default function SettingsPage() {
 																name="inputTimingMode"
 																className="form-select-sm"
 																value={values.nobdSyncDelay > 0 ? 'nobd' : 'stock'}
-																disabled={Boolean(values.zeroLatencyMode) && values.inputMode === 16}
+
 																onChange={(e) => {
 																	if (e.target.value === 'stock') {
 																		setFieldValue('nobdSyncDelay', 0);
@@ -1799,7 +1799,7 @@ export default function SettingsPage() {
 																	value={values.nobdSyncDelay}
 																	error={errors.nobdSyncDelay}
 																	isInvalid={errors.nobdSyncDelay}
-																	disabled={Boolean(values.zeroLatencyMode) && values.inputMode === 16}
+	
 																	onChange={handleChange}
 																	min={1}
 																	max={500}
@@ -1812,7 +1812,7 @@ export default function SettingsPage() {
 																	value={values.debounceDelay}
 																	error={errors.debounceDelay}
 																	isInvalid={errors.debounceDelay}
-																	disabled={Boolean(values.zeroLatencyMode) && values.inputMode === 16}
+	
 																	onChange={handleChange}
 																	min={0}
 																	max={5000}
@@ -1844,31 +1844,7 @@ export default function SettingsPage() {
 														</Col>
 													</Form.Group>
 													)}
-													{values.inputMode === 16 && (
-													<Form.Group className="row mb-3">
-														<Col sm={8}>
-															<Form.Check
-																label={t('SettingsPage:zero-latency-label')}
-																type="switch"
-																id="ZeroLatencyMode"
-																isInvalid={false}
-																checked={Boolean(values.zeroLatencyMode)}
-																onChange={(e) => {
-																	setFieldValue('zeroLatencyMode', e.target.checked ? 1 : 0);
-																}}
-															/>
-															<Form.Text className="text-muted d-block">
-																{t('SettingsPage:zero-latency-description')}
-															</Form.Text>
-															{Boolean(values.zeroLatencyMode) && (
-																<div className="alert alert-warning mt-2 mb-0" style={{fontSize: '0.85em'}}>
-																	{t('SettingsPage:zero-latency-tradeoffs')}
-																</div>
-															)}
-														</Col>
-													</Form.Group>
-													)}
-												<Form.Group className="row mb-5">
+													<Form.Group className="row mb-5">
 														<Col sm={5}>
 															<Form.Check
 																label={t(

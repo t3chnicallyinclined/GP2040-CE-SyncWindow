@@ -670,7 +670,7 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.dreamcastPinB, doc, "dreamcastPinB");
     // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     readDoc(gamepadOptions.disableVMU, doc, "disableVMU");
-    readDoc(gamepadOptions.zeroLatencyMode, doc, "zeroLatencyMode");
+    // zeroLatencyMode removed — ISR handles all DC commands, always on
     readDoc(gamepadOptions.inputModeB1, doc, "inputModeB1");
     readDoc(gamepadOptions.inputModeB2, doc, "inputModeB2");
     readDoc(gamepadOptions.inputModeB3, doc, "inputModeB3");
@@ -747,7 +747,7 @@ std::string getGamepadOptions()
     writeDoc(doc, "dreamcastPinB", gamepadOptions.dreamcastPinB);
     // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     writeDoc(doc, "disableVMU", gamepadOptions.disableVMU ? 1 : 0);
-    writeDoc(doc, "zeroLatencyMode", gamepadOptions.zeroLatencyMode ? 1 : 0);
+    // zeroLatencyMode removed — ISR handles all DC commands, always on
     writeDoc(doc, "inputModeB1", gamepadOptions.inputModeB1);
     writeDoc(doc, "inputModeB2", gamepadOptions.inputModeB2);
     writeDoc(doc, "inputModeB3", gamepadOptions.inputModeB3);

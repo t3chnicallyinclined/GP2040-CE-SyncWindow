@@ -338,10 +338,7 @@ void ButtonLayoutScreen::drawScreen() {
 		getRenderer()->drawText(0, 0, statusBar);
 	}
 
-    if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
-        getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
-        getRenderer()->drawText(0, 4, "      ACTIVE");
-    }
+    // DC mode: normal button layout shown (ISR handles Maple Bus independently)
 
     getRenderer()->drawText(0, 7, footer);
 }
