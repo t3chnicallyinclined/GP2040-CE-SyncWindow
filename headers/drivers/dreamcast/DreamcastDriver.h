@@ -32,10 +32,6 @@ public:
     bool zeroLatencyMode = false;
     void setFastPath(bool enable);
 
-    // Cached analog values for ISR access
-    volatile uint8_t cachedJX = 0x80;
-    volatile uint8_t cachedJY = 0x80;
-
     // Debug counters (only updated when enableDiagnostics == true)
     uint32_t debugRxCount = 0;
     uint32_t debugTxCount = 0;
@@ -45,6 +41,7 @@ public:
     uint32_t debugConsecutivePolls = 0;
     uint32_t debugMaxConsecutivePolls = 0;
     uint32_t debugResendCount = 0;
+    uint32_t debugTableHits = 0;    // CMD9 responses served from lookup table (ZL mode)
 
     // Response timing (only updated when enableDiagnostics == true)
     // Measures from packet arrival (rxArrivalTimestamp) to sendPacket()
@@ -64,6 +61,20 @@ public:
     uint32_t triggerRTMask;
     uint32_t buttonGpioMask;
     void buildGpioDcMap();
+
+    // Pre-computed CMD9 response lookup table.
+    // Index = compressed GPIO button state (sized to actual button count at init).
+    // Each entry stores word 3 (buttons+triggers). CRC is recomputed inline (~5 cycles).
+    // Words 0,1,2,4 are constant across all entries.
+    // Eliminates button mapping from CMD9 response path.
+    uint32_t* cmd9TableW3 = nullptr;        // Word 3: triggers + buttons per state
+    uint32_t  cmd9TableSize = 0;            // Actual table entries (1 << cmd9NumBits)
+    uint8_t   cmd9GpioPins[13];             // GPIO pin numbers in compressed order
+    uint8_t   cmd9NumBits = 0;              // Number of button GPIO pins (max 13)
+    volatile uint32_t cmd9ReadyW3;          // Current word 3 (updated every main loop)
+    void buildCmd9LookupTable();
+    void updateCmd9FromGpio();
+    void updateAnalogFromGamepad(Gamepad* gamepad);
 
     MapleBus bus;
     uint32_t controllerPacketBuf[6];

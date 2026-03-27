@@ -324,8 +324,10 @@ void ButtonLayoutScreen::drawScreen() {
         }
         getRenderer()->drawText(0, 3, std::string(buf));
 
-        // Line 4: cmd9 count
-        snprintf(buf, sizeof(buf), "cmd9:%lu", (unsigned long)dc->debugCmd9Count);
+        // Line 4: cmd9 count + lookup table hit count (tbl: should equal cmd9: in ZL mode)
+        snprintf(buf, sizeof(buf), "cmd9:%lu tbl:%lu",
+                 (unsigned long)dc->debugCmd9Count,
+                 (unsigned long)dc->debugTableHits);
         getRenderer()->drawText(0, 4, std::string(buf));
         return;
     }

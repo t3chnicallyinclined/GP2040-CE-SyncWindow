@@ -235,6 +235,7 @@ void DisplayAddon::process() {
                     // Don't write flash here — the ~45ms flash erase stalls Core 0,
                     // causing the DC to disconnect. Use web UI to persist across reboots.
                     Storage::getInstance().getGamepadOptions().zeroLatencyMode = dc->zeroLatencyMode;
+                    dc->setFastPath(dc->zeroLatencyMode);
                     s1s2Toggled = true;
                     dcDrawDone = false;  // force redraw
                 }

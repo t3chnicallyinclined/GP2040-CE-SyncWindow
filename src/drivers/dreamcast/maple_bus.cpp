@@ -30,15 +30,24 @@ static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
             uint8_t expected = (bus->rxDmaBuf[2] >> 24) & 0xFF;
 
             if (crc == expected) {
-                // CRC valid — capture GPIO and pre-build response (no TX!)
+                // CRC valid — build response packet via callback.
                 bus->fastPathCallback(hdr, bus);
                 bus->cmd9PreBuilt = true;
+                // Disable RX SM + clear PIO IRQ to prevent re-entry.
+                // Main loop will restart RX via clearRxAfterFastPath + flushRx.
+                pio_sm_set_enabled(bus->getRxPio(), bus->getRxSm(), false);
+                pio_interrupt_clear(bus->getRxPio(), bus->getRxSm());
                 return;
             }
         }
     }
 
-    // Not CMD 9 or CRC failed — main loop handles via pollReceive()
+    // Non-CMD9 or bad CRC: disable the NVIC interrupt to prevent infinite re-entry.
+    // Leave the PIO IRQ flag SET so pollReceive() can detect end-of-packet.
+    // startRx() will re-enable the NVIC interrupt after the main loop processes it.
+    uint irqNum = (bus->getRxPio() == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+    irq_set_enabled(irqNum, false);
+    bus->isrNvicDisabled = true;
 }
 
 MapleBus::MapleBus()
@@ -140,6 +149,13 @@ void __no_inline_not_in_flash_func(MapleBus::startRx)() {
 
     // Enable SM — it will wait for sync sequence
     pio_sm_set_enabled(rxPio, rxSm, true);
+
+    // Re-enable NVIC interrupt if the ISR disabled it for a non-CMD9 packet.
+    if (isrNvicDisabled) {
+        isrNvicDisabled = false;
+        uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+        irq_set_enabled(irqNum, true);
+    }
 
     rxStartTimeUs = time_us_64();
 }
@@ -397,3 +413,4 @@ void __no_inline_not_in_flash_func(MapleBus::clearRxAfterFastPath)() {
     pio_sm_set_enabled(rxPio, rxSm, false);
     pio_interrupt_clear(rxPio, rxSm);
 }
+

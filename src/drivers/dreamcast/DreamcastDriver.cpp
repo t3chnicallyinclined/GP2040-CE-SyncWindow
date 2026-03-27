@@ -12,25 +12,28 @@ static void __no_inline_not_in_flash_func(cmd9GpioCapture)(uint32_t hdr, MapleBu
     DreamcastDriver* drv = irqDriverInstance;
     if (!drv) return;
 
-    uint32_t freshGpio = ~gpio_get_all();
-    uint8_t lt, rt;
-    uint16_t dcButtons = drv->mapRawGpioToDC(freshGpio, &lt, &rt);
+    // Pre-computed lookup table path: word 3 (buttons+triggers) and word 5 (CRC)
+    // are already built and waiting. Just stamp them into the packet buffer.
+    // The main loop calls updateCmd9FromGpio() thousands of times per frame,
+    // so cmd9ReadyW3/W5 always reflect the latest GPIO state.
 
-    uint8_t jx = drv->cachedJX;
-    uint8_t jy = drv->cachedJY;
-
+    // Only header needs dynamic update (port address from DC's request)
     uint8_t subPeriphBits = drv->disableVMU ? 0 : MAPLE_SUB0_ADDR;
     uint8_t lastPort = maple_hdr_origin(hdr) & MAPLE_PORT_MASK;
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
 
-    drv->controllerPacketBuf[1] = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
-    drv->controllerPacketBuf[3] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
-                                | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
-                                | (dcButtons & 0xFF);
-    drv->controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
-                                | ((uint32_t)jy << 8) | jx;
-    drv->controllerPacketBuf[5] = MapleBus::calcCRC(&drv->controllerPacketBuf[1], 4);
+    uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+    uint32_t w3 = drv->cmd9ReadyW3;
+
+    drv->controllerPacketBuf[1] = w1;
+    drv->controllerPacketBuf[3] = w3;
+
+    // Recompute CRC with actual header (port may differ from pre-computed default).
+    // This is just 3 XORs + 1 fold — ~5 clock cycles. Still near-instant.
+    uint32_t xorAll = w1 ^ drv->controllerPacketBuf[2] ^ w3 ^ drv->controllerPacketBuf[4];
+    uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+    drv->controllerPacketBuf[5] = (uint32_t)crc << 24;
 }
 
 static void buildDevInfoString(uint32_t* dest, const char* str, uint maxLen) {
@@ -68,6 +71,11 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
     }
 
     buildGpioDcMap();
+    buildCmd9LookupTable();
+
+    if (zeroLatencyMode) {
+        setFastPath(true);
+    }
 
     connected = true;
     return true;
@@ -123,6 +131,77 @@ void DreamcastDriver::buildGpioDcMap() {
         triggerRTMask = gamepad->mapButtonR2->pinMask;
         buttonGpioMask |= triggerRTMask;
     }
+}
+
+void DreamcastDriver::buildCmd9LookupTable() {
+    // Build a list of GPIO pins used for buttons (compressed index).
+    // Each bit position in the lookup table index corresponds to one GPIO pin.
+    cmd9NumBits = 0;
+    memset(cmd9GpioPins, 0, sizeof(cmd9GpioPins));
+
+    for (uint pin = 0; pin < 30 && cmd9NumBits < 13; pin++) {
+        if (buttonGpioMask & (1u << pin)) {
+            cmd9GpioPins[cmd9NumBits] = pin;
+            cmd9NumBits++;
+        }
+    }
+
+    cmd9TableSize = 1u << cmd9NumBits;
+
+    // Allocate only what's needed — typically 13 buttons = 8192 * 4 = 32KB.
+    // Much better than static 64KB that was blowing the heap.
+    if (cmd9TableW3) delete[] cmd9TableW3;
+    cmd9TableW3 = new uint32_t[cmd9TableSize];
+
+    // For every possible button combination, pre-build word 3.
+    // CRC is recomputed inline at response time (~5 cycles) since the
+    // header varies by port and word 4 (analog) changes at runtime.
+    for (uint32_t i = 0; i < cmd9TableSize; i++) {
+        // Expand compressed index back to GPIO bitmask
+        uint32_t fakeGpio = 0;
+        for (uint8_t b = 0; b < cmd9NumBits; b++) {
+            if (i & (1u << b)) {
+                fakeGpio |= (1u << cmd9GpioPins[b]);
+            }
+        }
+
+        // Map to DC buttons using existing function
+        uint8_t lt, rt;
+        uint16_t dcButtons = mapRawGpioToDC(fakeGpio, &lt, &rt);
+
+        // Word 3: triggers (high bytes) + DC buttons (low bytes)
+        cmd9TableW3[i] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
+                       | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
+                       | (dcButtons & 0xFF);
+    }
+
+    // Initialize current ready state to "no buttons pressed"
+    cmd9ReadyW3 = cmd9TableW3[0];
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)() {
+    // Called every main loop cycle — thousands of times per DC frame.
+    // Compresses current GPIO state to lookup table index,
+    // then stores the pre-built packet words for instant ISR pickup.
+    uint32_t raw = ~gpio_get_all();
+    uint32_t index = 0;
+    for (uint8_t b = 0; b < cmd9NumBits; b++) {
+        if (raw & (1u << cmd9GpioPins[b])) {
+            index |= (1u << b);
+        }
+    }
+    cmd9ReadyW3 = cmd9TableW3[index];
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::updateAnalogFromGamepad)(Gamepad* gamepad) {
+    // Keep word 4 (analog axes) current so the ISR fast path sends correct stick values.
+    // Sticks update once per 16ms pipeline tick — that's fine, no sub-ms need here.
+    uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+    uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+    uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+    uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
+    controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
+                           | ((uint32_t)jy << 8) | jx;
 }
 
 uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapRawGpioToDC)(
@@ -267,42 +346,35 @@ uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad* gamepad) {
-    uint16_t dcButtons;
-    uint8_t lt, rt, jx, jy;
-
-    if (zeroLatencyMode) {
-        uint32_t freshGpio = ~gpio_get_all();
-        dcButtons = mapRawGpioToDC(freshGpio, &lt, &rt);
-
-        uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-        uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-        jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-        jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
-    } else {
-        uint32_t buttons = gamepad->state.buttons;
-        uint8_t  dpad    = gamepad->state.dpad;
-        lt = gamepad->state.lt;
-        rt = gamepad->state.rt;
-        if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
-        if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
-
-        dcButtons = mapButtonsToDC(buttons, dpad);
-
-        uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-        uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-        jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-        jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
-    }
-
     uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
 
     controllerPacketBuf[1] = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
 
-    controllerPacketBuf[3] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
-                           | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
-                           | (dcButtons & 0xFF);
+    if (zeroLatencyMode) {
+        // Use pre-built lookup table word — updateCmd9FromGpio() runs every tight loop
+        // iteration so cmd9ReadyW3 is fresher than a new gpio_get_all() call here.
+        controllerPacketBuf[3] = cmd9ReadyW3;
+        if (enableDiagnostics) debugTableHits++;
+    } else {
+        uint32_t buttons = gamepad->state.buttons;
+        uint8_t  dpad    = gamepad->state.dpad;
+        uint8_t lt = gamepad->state.lt;
+        uint8_t rt = gamepad->state.rt;
+        if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
+        if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
+
+        uint16_t dcButtons = mapButtonsToDC(buttons, dpad);
+        controllerPacketBuf[3] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
+                               | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
+                               | (dcButtons & 0xFF);
+    }
+
+    uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
+    uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
+    uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
+    uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
 
     controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
                            | ((uint32_t)jy << 8) | jx;
@@ -373,13 +445,6 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
     const bool diag = enableDiagnostics;
     bus.enableDiagnostics = diag;
 
-    if (zeroLatencyMode) {
-        uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-        uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-        cachedJX = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-        cachedJY = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
-    }
-
     if (diag) debugXorFail = bus.debugXorFail;
 
     if (bus.cmd9PreBuilt) {
@@ -392,7 +457,9 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
             if (elapsed < respMin) respMin = elapsed;
             if (elapsed > respMax) respMax = elapsed;
             respCount++;
+            debugRxCount++;
             debugCmd9Count++; debugTxCount++;
+            debugTableHits++;
         }
         waitTxFlushRx();
         return;

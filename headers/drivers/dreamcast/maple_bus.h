@@ -130,7 +130,12 @@ public:
     bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
 
     // Set by ISR when a valid CMD 9 packet is received and response is pre-built.
+    // Main loop must send the packet via clearRxAfterFastPath() + sendPacket().
     volatile bool cmd9PreBuilt = false;
+
+    // Set by ISR when a non-CMD9 packet arrives. The ISR disables the NVIC interrupt
+    // to prevent re-entry (PIO IRQ flag is left set for pollReceive). startRx() re-enables.
+    volatile bool isrNvicDisabled = false;
 
     // Packet arrival timestamp — set when end-of-packet IRQ flag is first detected.
     // Timestamp when end-of-packet was detected (for diagnostics).
