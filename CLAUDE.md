@@ -2,7 +2,11 @@
 
 ## What Is This Project?
 
-A fork of GP2040-CE v0.7.12 that adds **NOBD (No OBD)** — a firmware-level sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for fighting game players who need reliable dashes, throw techs, and multi-button inputs without resorting to OBD (One Button Dash) macros.
+A fork of GP2040-CE v0.7.12 adding two major features:
+
+1. **NOBD (No OBD)** — firmware-level sync window that groups near-simultaneous button presses so they arrive on the same USB frame. Built for fighting game players who need reliable dashes, throw techs, and multi-button inputs without resorting to OBD (One Button Dash) macros.
+
+2. **Full ISR-Driven Dreamcast Maple Bus** — ALL controller commands handled from PIO end-of-packet interrupt. Pre-computed lookup table for CMD9 (1-2µs response). Zero main loop overhead for Maple Bus during gameplay. See `docs/EXPERT-CONTEXT.md` section 5 for full architecture.
 
 **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
 **Current release:** v0.7.12-nobd-19
@@ -157,13 +161,22 @@ gh release create v0.7.12-nobd-X release/GP2040-CE-NOBD_0.7.12_*.uf2 --title "Ti
 
 | File | What Changed |
 |------|-------------|
-| `src/gp2040.cpp` | Restored stock debounce, added `syncGpioGetAll()` with sync window + release debounce, mutually exclusive dispatch |
+| `src/gp2040.cpp` | NOBD sync window, DC mode: `updateCmd9FromGpio()` + `updateAnalogFromGamepad()` (ISR handles Maple Bus) |
 | `headers/gp2040.h` | Added `syncGpioGetAll()` declaration |
-| `proto/config.proto` | Added `nobdSyncDelay` field 34, `nobdReleaseDebounce` field 35 to `GamepadOptions` |
-| `src/config_utils.cpp` | Added `DEFAULT_NOBD_SYNC_DELAY = 5`, `nobdReleaseDebounce = false` and `INIT_UNSET_PROPERTY` |
-| `src/webconfig.cpp` | Added `readDoc`/`writeDoc` for `nobdSyncDelay` and `nobdReleaseDebounce` |
-| `www/src/Pages/SettingsPage.jsx` | Mode dropdown + value field + release debounce checkbox for input timing |
-| `www/src/Locales/en/SettingsPage.jsx` | Translation labels for input timing controls + release debounce |
+| `proto/config.proto` | Added `nobdSyncDelay` field 34, `nobdReleaseDebounce` field 35, Dreamcast pin fields 36-37 |
+| `src/config_utils.cpp` | Defaults for NOBD, Dreamcast pins |
+| `src/webconfig.cpp` | WebConfig for NOBD + Dreamcast settings |
+| `www/src/Pages/SettingsPage.jsx` | NOBD mode dropdown + Dreamcast pin config |
+| `www/src/Locales/en/SettingsPage.jsx` | Translation labels for input timing + Dreamcast settings |
+| `src/drivers/dreamcast/DreamcastDriver.cpp` | Full ISR command dispatch, pre-computed lookup table, `rebuildAllPacketsForPort()` |
+| `headers/drivers/dreamcast/DreamcastDriver.h` | ISR dispatch, pre-built packet buffers, lookup table |
+| `src/drivers/dreamcast/maple_bus.cpp` | ISR handler (`mapleRxIrqHandler`), `isrSendFifo()`, `isrSendDma()`, bus idle check in `startRx()` |
+| `headers/drivers/dreamcast/maple_bus.h` | MapleBus ISR infrastructure, `MapleIsrCallback` |
+| `src/drivers/dreamcast/DreamcastVMU.cpp` | VMU save/load, flash persistence |
+| `headers/drivers/dreamcast/DreamcastVMU.h` | VMU constants, class |
+| `src/drivers/dreamcast/maple.pio` | PIO TX/RX programs for Maple Bus |
+| `src/addons/display.cpp` | DC display at full speed, S1 diagnostic toggle |
+| `src/display/ui/screens/ButtonLayoutScreen.cpp` | DC diagnostic overlay, normal button layout in DC mode |
 | ~~`test_finger_gap.py`~~ | Moved to [finger-gap-tester](https://github.com/t3chnicallyinclined/finger-gap-tester) repo |
 | ~~`tools/finger-gap-tester/`~~ | Moved to [finger-gap-tester](https://github.com/t3chnicallyinclined/finger-gap-tester) repo |
 | `README.md` | Rewrite for NOBD documentation |

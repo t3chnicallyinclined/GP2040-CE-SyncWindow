@@ -24,7 +24,7 @@ A fork of GP2040-CE v0.7.12 adding two major features:
 
 | File | What | Where to Edit |
 |------|------|---------------|
-| `src/gp2040.cpp` | `syncGpioGetAll()` (~line 303) — the NOBD algorithm. `debounceGpioGetAll()` (~line 267) — stock debounce. Main loop dispatch (~line 397). Zero Latency tight poll loop (~line 462). | Sync algorithm, main loop structure |
+| `src/gp2040.cpp` | `syncGpioGetAll()` (~line 303) — the NOBD algorithm. `debounceGpioGetAll()` (~line 267) — stock debounce. Main loop dispatch (~line 397). DC mode: `updateCmd9FromGpio()` + `updateAnalogFromGamepad()`. | Sync algorithm, main loop structure |
 | `headers/gp2040.h` | Declares `syncGpioGetAll()`, `buttonGpios` mask | Function signatures |
 | `proto/config.proto` | `nobdSyncDelay` field 34, `nobdReleaseDebounce` field 35 in `GamepadOptions` | Adding new config fields |
 | `src/config_utils.cpp` | `DEFAULT_NOBD_SYNC_DELAY = 5`, `nobdReleaseDebounce = false`, `INIT_UNSET_PROPERTY` | Default values |
@@ -39,8 +39,8 @@ A fork of GP2040-CE v0.7.12 adding two major features:
 | `src/drivers/dreamcast/maple.pio` | PIO assembly — TX program (SM0 on PIO0) + RX triple program (SM0-2 on PIO1). ~192 lines. | Wire protocol timing, bit sampling |
 | `src/drivers/dreamcast/maple_bus.cpp` | Transport layer — `init()`, `sendPacket()`, `pollReceive()`, `decodeSample()`, `flushRx()`, `startRx()`, CRC. ~324 lines. | Packet send/receive, DMA, SM restart |
 | `headers/drivers/dreamcast/maple_bus.h` | MapleBus class, protocol constants (`MAPLE_CMD_*`, `MAPLE_FUNC_*`), addressing, packet helpers. ~163 lines. | Adding commands, changing constants |
-| `src/drivers/dreamcast/DreamcastDriver.cpp` | Application layer — button mapping, command dispatch, `sendControllerState()`, Zero Latency GPIO read, `buildGpioDcMap()`. ~469 lines. | Button mapping, response building, ZL mode |
-| `headers/drivers/dreamcast/DreamcastDriver.h` | Driver class, debug counters, `zeroLatencyMode` flag, GPIO→DC mapping tables. ~67 lines. | Adding flags, changing interface |
+| `src/drivers/dreamcast/DreamcastDriver.cpp` | Application layer — ISR command dispatch (`isrCommandDispatch`), lookup table (`buildCmd9LookupTable`), `rebuildAllPacketsForPort()`, `buildGpioDcMap()`. | ISR dispatch, response building |
+| `headers/drivers/dreamcast/DreamcastDriver.h` | Driver class, pre-built packet buffers, lookup table, debug counters. | Adding buffers, changing interface |
 
 ### VMU (Virtual Memory Unit)
 
@@ -53,9 +53,9 @@ A fork of GP2040-CE v0.7.12 adding two major features:
 
 | File | What | Where to Edit |
 |------|------|---------------|
-| `src/addons/display.cpp` | Display addon — DC mode rate-limiting (10 FPS), S1 hold for diagnostics toggle, S1+S2 hold for Zero Latency toggle, `dcDrawDone` idle optimization. | Button hold detection, DC display behavior |
+| `src/addons/display.cpp` | Display addon — S1 hold for diagnostics toggle. DC mode runs at full speed (ISR handles Maple Bus). | Button hold detection, DC display behavior |
 | `headers/addons/display.h` | Display addon class | |
-| `src/display/ui/screens/ButtonLayoutScreen.cpp` | `drawScreen()` — DC diagnostic view (Rx/Tx/XF counters), DC status bar (`DC VMU:X/200`), Zero Latency banner, ZL indicator. | What shows on OLED |
+| `src/display/ui/screens/ButtonLayoutScreen.cpp` | `drawScreen()` — DC diagnostic view (Rx/Tx/XF/ISR timing), normal button layout in DC mode. | What shows on OLED |
 | `headers/display/ui/screens/ButtonLayoutScreen.h` | Screen class | |
 
 ### Integration / Glue
@@ -165,9 +165,11 @@ RX uses 256-word DMA ring buffer to prevent FIFO overflow during main loop laten
 gp2040.cpp::run() → if dcMode:
   1. NOBD sync or stock debounce (GPIO read)
   2. gamepad->read() / process()
-  3. Addon processing
-  4. dcDriver->process(gamepad) — polls for Maple commands, responds
-  5. If Zero Latency: tight poll loop (see section 5)
+  3. Addon processing (display at full speed, hotkeys, LEDs)
+  4. dcDriver->updateCmd9FromGpio()      — keep lookup table current
+  5. dcDriver->updateAnalogFromGamepad() — keep analog axes current
+  6. dcDriver->process() — just finishIsrTx() cleanup if ISR fired
+  (ISR handles all Maple commands independently — no polling needed)
 ```
 
 ### The Root Cause Story — Disconnect Cycling Bug
@@ -189,66 +191,83 @@ gp2040.cpp::run() → if dcMode:
 
 ---
 
-## 5. Zero Latency Mode
+## 5. Full ISR-Driven Maple Bus Architecture
 
-### What It Does
+### Overview
 
-Standard mode: GPIO is read at the top of the main loop (~400-800µs before the DC polls). This creates a staleness window where a button pressed after the read but before the poll is missed until the next frame.
+ALL controller Maple Bus commands are handled from the PIO end-of-packet interrupt (ISR). No `pollReceive()` in the hot path. Core 0 main loop is completely free from Maple Bus polling — runs addons, display, NOBD sync, hotkeys without any DC overhead.
 
-Zero Latency: `gpio_get_all()` is called at the instant we build the GET_CONDITION response. Staleness drops from ~400-800µs to ~0µs. Sub-microsecond total (8ns GPIO register read + ~130-560ns button mapping).
+VMU commands (CMD10-13) fall through to main loop via `isrNvicDisabled` flag for now (save/load screens only, not latency-critical).
 
-### Where the Code Is
+### How It Works
 
-**Toggle:** `src/addons/display.cpp` — S1+S2 hold for 3 seconds. Sets `dcDriver->zeroLatencyMode`.
+1. PIO RX receives a complete Maple Bus packet, sets IRQ flag
+2. NVIC fires `mapleRxIrqHandler` (highest priority ISR)
+3. ISR validates CRC (generic, variable-length)
+4. ISR calls `isrCommandDispatch()` — switch on command byte
+5. Response sent via `isrSendFifo()` (≤8 words → PIO TX FIFO) or `isrSendDma()` (>8 words → TX DMA)
+6. Main loop calls `finishIsrTx()` next iteration → waits for TX completion, restarts RX
 
-**Fresh GPIO read:** `src/drivers/dreamcast/DreamcastDriver.cpp` in `sendControllerState()`:
+### ISR Command Dispatch
+
+| CMD | Response | Words | Method | ISR Time |
+|-----|----------|-------|--------|----------|
+| 1 (DEVICE_REQUEST) | Device info | 31 | DMA | ~2µs |
+| 2 (ALL_STATUS_REQUEST) | Extended info | 51 | DMA | ~2µs |
+| 3/4 (RESET/SHUTDOWN) | ACK | 3 | FIFO | ~1µs |
+| 9 (GET_CONDITION) | Controller state | 6 | FIFO | ~1-2µs |
+| 14 (SET_CONDITION) | ACK | 3 | FIFO | ~1µs |
+| 10-13 (VMU) | Various | Various | Main loop fallback | ~15-20µs |
+
+### Zero-Computation CMD9 Response
+
+- `buildCmd9LookupTable()` pre-computes W3 (buttons+triggers) and W5 (CRC) for every possible GPIO button state
+- `updateCmd9FromGpio()` runs every main loop iteration, compresses GPIO to table index, stores `cmd9ReadyW3` + `cmd9ReadyW5`
+- After first CMD1, `rebuildAllPacketsForPort()` pre-computes all headers+CRCs with the real port address
+- ISR just copies pre-built W3+W5 into `controllerPacketBuf` and stuffs FIFO — zero math
+
+### Pre-built Packet Buffers
+
+All static responses pre-built at init with correct headers+CRCs (rebuilt once after CMD1 reveals port):
+- `infoPacketBuf[31]` — CMD1 response (device info)
+- `extInfoBuf[51]` — CMD2 response (extended info)
+- `ackPacketBuf[3]` — CMD3/4/14 response (ACK)
+- `controllerPacketBuf[6]` — CMD9 response (dynamic W3+W5 from lookup table)
+- `unknownCmdBuf[3]` — unknown command response
+- `resendPacketBuf[3]` — RESEND request
+
+### Main Loop (DC Mode)
+
 ```cpp
-if (zeroLatencyMode) {
-    uint32_t freshGpio = ~gpio_get_all();
-    dcButtons = mapRawGpioToDC(freshGpio, &lt, &rt);
-} else {
-    dcButtons = mapButtonsToDC(gamepad->state.buttons, gamepad->state.dpad);
+// No tight loop. No pollReceive(). ISR handles everything.
+if (dcMode) {
+    dcDriver->updateCmd9FromGpio();       // Keep lookup table current
+    dcDriver->updateAnalogFromGamepad();  // Keep analog axes current
 }
+// process() just calls finishIsrTx() if ISR fired
 ```
 
-**GPIO→DC mapping table:** `buildGpioDcMap()` in `DreamcastDriver.cpp` — built at init time from pin config. Maps each GPIO pin directly to a DC button mask. Stored in `gpioDcButtonMap[30]` + `gpioDcTriggerLT[30]` + `gpioDcTriggerRT[30]`.
+### Display
 
-**Tight poll loop:** `src/gp2040.cpp` (~line 462):
-```cpp
-if (dcMode && dcDriver->zeroLatencyMode) {
-    uint64_t nextPipeline = time_us_64() + 16000;
-    while (dcDriver->zeroLatencyMode) {
-        dcDriver->process(gamepad);  // ~1µs per iteration when no packet
-        if (time_us_64() >= nextPipeline) break;  // run pipeline once per DC frame
-    }
-}
-```
-
-Core 0 does nothing but poll for DC commands. Pipeline (debounce, addons, hotkeys) runs once every ~16ms to keep S1/S2 detection and reboot hotkeys alive.
-
-**Display:** `src/display/ui/screens/ButtonLayoutScreen.cpp` — shows "ZERO-LATENCY ACTIVATED/DEACTIVATED" banner on toggle. "ZL" indicator at bottom-left when active. "ZL:ON/OFF" in diagnostic view.
-
-### What It Bypasses
-
-Zero Latency reads raw GPIO, bypassing: NOBD sync window (unnecessary at 60Hz DC polling), stock debounce (unnecessary at 60Hz), SOCD cleaning, addons. Analog sticks/triggers still come from gamepad pipeline. This is intentional — at 60Hz polling, bounce settles between polls and SOCD is irrelevant for competitive DC play.
+OLED runs at full speed in DC mode — no throttle. Button layout screen shows live button state, same as USB modes. Hold S1 for 3 seconds to toggle diagnostic overlay.
 
 ### Performance
 
-| Mode | Staleness | Response build time |
-|------|-----------|-------------------|
-| Standard | 0-800µs | Same |
-| Zero Latency | ~0µs | ~130-560ns (GPIO read + mapping) |
-| Original Sega controller | ~0µs | Unknown (ASIC internal) |
+| Metric | Value |
+|--------|-------|
+| CMD9 ISR response time | 1-2µs |
+| XF (CRC failures) | 0 |
+| Wire transmission time | ~65-92µs (protocol physics, all controllers) |
+| Main loop overhead for DC | ~5µs/iteration (updateCmd9 + updateAnalog + finishIsrTx) |
 
 ### Other Adapter Comparison (verified from source code, March 2025)
 
-| Adapter | GPIO at response time? | How verified |
-|---------|----------------------|--------------|
-| MaplePad (RP2040) | **Yes** — `gpio_get()` inside `SendControllerStatus()` | [Source code](https://github.com/mackieks/MaplePad) confirmed |
-| GmanModz (PIC32) | **No** — sends pre-built `buf[]` from earlier `controller_poll()` | [Source code](https://github.com/Gmanmodz/Dreamcast-Controller-Emulator) confirmed |
-| BlueRetro (ESP32) | **No** — reads from `wired_adapter.data[]` buffer populated by Bluetooth polling | [Source code](https://github.com/darthcloud/BlueRetro) confirmed |
-| raphnet (AVR) | Unknown — source not verified | |
-| Brook Retro Board | Unknown — closed source | |
+| Adapter | Architecture | Response time |
+|---------|-------------|---------------|
+| **GP2040-CE NOBD** | Full ISR — pre-computed lookup table + PIO FIFO TX | **~1-2µs** |
+| MaplePad (RP2040) | GPIO read at response time in main loop | ~10-50µs |
+| GmanModz (PIC32) | Pre-built buffer from earlier poll | ~100-500µs |
+| BlueRetro (ESP32) | Bluetooth buffer, not at response time | ~1-5ms |
 
 ---
 
@@ -313,25 +332,19 @@ The DC sometimes writes `0` for save area fields during formatting. Protection c
 ## 7. OLED Display in DC Mode
 
 ### Normal Mode (default)
-- Status bar: `DC VMU:X/200` — drawn once on boot
-- **Zero CPU overhead during gameplay** — `dcDrawDone` flag prevents redraws
-- Redraws only on VMU activity (save/load) or Zero Latency toggle
-- No splash, no profile banner, no button layout widgets
+- Shows normal button layout screen (same as USB modes) — live button state visualization
+- **Full speed** — ISR handles Maple Bus independently, no display throttle needed
+- Status bar, profile banner, button widgets all work
 
 ### Diagnostic Mode
 - Toggle: Hold S1 (Select) 3 seconds
-- Shows live counters: Rx, Tx, XF, VMU reads/writes, ZL status
-- Rate-limited to 10 FPS via display addon
-
-### Zero Latency Toggle
-- Hold S1+S2 (Select+Start) 3 seconds
-- Shows "ZERO-LATENCY ACTIVATED/DEACTIVATED" centered
-- "ZL" indicator at bottom-left when active
+- Shows live counters: Rx, Tx, XF, VMU reads/writes, ISR response time
+- Line 3: `ISR:X-Yus n:N` — response time range and count
+- Line 4: `c9:N t:N f:N` — CMD9 count, table hits, ISR fallthroughs
 
 ### Implementation
-- Button hold detection: `src/addons/display.cpp` (S1/S1+S2 hold timers)
+- Button hold detection: `src/addons/display.cpp` (S1 hold timer)
 - Screen drawing: `src/display/ui/screens/ButtonLayoutScreen.cpp` (`drawScreen()`)
-- Display rate-limiting: `src/addons/display.cpp` (100ms throttle in DC mode)
 - Drawing primitives: `getRenderer()->drawText(x, row, text)`, `drawRectangle(x, y, w, h, filled, inverted)`
 
 ---
@@ -506,7 +519,7 @@ NOBD groups presses within a configurable window (default 5ms) so both appear on
 - 60Hz, tied to VBlank interrupt
 - Controller reports instantaneous state when polled (no buffering, no history)
 - Original Sega ASIC (315-6125) reads GPIO at response time — no staleness
-- Our Zero Latency mode matches this behavior
+- Our ISR architecture matches this — pre-computed lookup table updated every main loop cycle, ISR reads it at response time (~1-2µs)
 
 ### Platform Polling Rates
 
