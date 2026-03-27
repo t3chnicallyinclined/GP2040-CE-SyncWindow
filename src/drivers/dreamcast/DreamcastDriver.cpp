@@ -87,7 +87,7 @@ void DreamcastDriver::setFastPath(bool enable) {
 
     if (enable) {
         irqDriverInstance = this;
-        bus.enableFastPath(cmd9GpioCapture);
+        bus.enableFastPath(cmd9GpioCapture, controllerPacketBuf);
     } else {
         bus.disableFastPath();
     }
@@ -447,12 +447,16 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
 
     if (diag) debugXorFail = bus.debugXorFail;
 
-    if (bus.cmd9PreBuilt) {
-        bus.cmd9PreBuilt = false;
-        bus.clearRxAfterFastPath();
-        bus.sendPacket(controllerPacketBuf, 6);
+    if (bus.cmd9TxFired) {
+        bus.cmd9TxFired = false;
+        // TX was already fired from ISR via FIFO writes.
+        // Just wait for TX PIO to finish and restart RX.
+        bus.finishFastPathTx();
         if (diag) {
-            uint32_t elapsed = timer_hw->timerawl - bus.rxArrivalTimestamp;
+            // Response time = how fast we responded (ISR arrival → TX FIFO written).
+            // Wire time (~65-92µs) is not included — that's protocol physics,
+            // identical for all controllers.
+            uint32_t elapsed = bus.isrTxStartTimestamp - bus.rxArrivalTimestamp;
             respLast = elapsed;
             if (elapsed < respMin) respMin = elapsed;
             if (elapsed > respMax) respMax = elapsed;
@@ -461,12 +465,18 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
             debugCmd9Count++; debugTxCount++;
             debugTableHits++;
         }
-        waitTxFlushRx();
         return;
     }
 
     const uint8_t* packet = nullptr;
     uint rxLen = 0;
+
+    // In ZL mode with ISR armed: only call pollReceive() when the ISR flagged
+    // a non-CMD9 packet (isrNvicDisabled). Otherwise there's nothing to poll —
+    // CMD9 is handled by the ISR, and calling pollReceive() on an idle bus
+    // can pick up noise/echo as corrupt packets, causing spurious XF + RESEND.
+    if (zeroLatencyMode && !bus.isrNvicDisabled) return;
+
     bool gotPacket = bus.pollReceive(&packet, &rxLen);
 
     if (!gotPacket && bus.wasLastRxCorrupt()) {

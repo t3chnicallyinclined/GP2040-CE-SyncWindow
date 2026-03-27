@@ -13,7 +13,9 @@ static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
     MapleBus* bus = irqBusInstance;
     if (!bus || !bus->fastPathCallback) return;
 
-    if (bus->enableDiagnostics) bus->rxArrivalTimestamp = timer_hw->timerawl;
+    // Always stamp arrival time — negligible cost (single register read).
+    // Diag guard is in the main loop when reading, not here.
+    bus->rxArrivalTimestamp = timer_hw->timerawl;
 
     // Validate packet: CMD 9 is 3 words (header + funcCode + CRC)
     uint32_t remaining = dma_channel_hw_addr(bus->rxDmaChannel)->transfer_count;
@@ -32,11 +34,32 @@ static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
             if (crc == expected) {
                 // CRC valid — build response packet via callback.
                 bus->fastPathCallback(hdr, bus);
-                bus->cmd9PreBuilt = true;
-                // Disable RX SM + clear PIO IRQ to prevent re-entry.
-                // Main loop will restart RX via clearRxAfterFastPath + flushRx.
+
+                // Disable RX SM before clearing IRQ to prevent echo capture.
                 pio_sm_set_enabled(bus->getRxPio(), bus->getRxSm(), false);
+                // Abort RX DMA so it stops writing to rxDmaBuf.
+                dma_channel_abort(bus->rxDmaChannel);
+                // Clear PIO IRQ flag to prevent NVIC re-entry.
                 pio_interrupt_clear(bus->getRxPio(), bus->getRxSm());
+
+                // Direct FIFO TX: stuff 6 words into PIO TX FIFO.
+                // TX FIFO is 8-deep (joined). Packet is 6 words. Fits perfectly.
+                // TX SM is stalled at `pull` — first word wakes it immediately.
+                PIO txPio = bus->getTxPio();
+                uint txSm = bus->getTxSm();
+                // Safety: verify TX FIFO is empty (SM should be stalled at pull)
+                if (pio_sm_is_tx_fifo_empty(txPio, txSm)) {
+                    volatile uint32_t* txf = &txPio->txf[txSm];
+                    const uint32_t* pkt = bus->fastPathPacket;
+                    txf[0] = pkt[0];  // bitPairsMinus1
+                    txf[0] = pkt[1];  // header
+                    txf[0] = pkt[2];  // funcCode
+                    txf[0] = pkt[3];  // buttons+triggers
+                    txf[0] = pkt[4];  // analog axes
+                    txf[0] = pkt[5];  // CRC
+                    bus->isrTxStartTimestamp = timer_hw->timerawl;
+                }
+                bus->cmd9TxFired = true;
                 return;
             }
         }
@@ -45,6 +68,7 @@ static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
     // Non-CMD9 or bad CRC: disable the NVIC interrupt to prevent infinite re-entry.
     // Leave the PIO IRQ flag SET so pollReceive() can detect end-of-packet.
     // startRx() will re-enable the NVIC interrupt after the main loop processes it.
+    bus->debugIsrFallthrough++;
     uint irqNum = (bus->getRxPio() == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
     irq_set_enabled(irqNum, false);
     bus->isrNvicDisabled = true;
@@ -142,10 +166,27 @@ void __no_inline_not_in_flash_func(MapleBus::startRx)() {
 
     // Reset DMA to beginning of buffer
     dma_channel_abort(rxDmaChannel);
+    dma_hw->ints0 = (1u << rxDmaChannel);  // Clear DMA IRQ sticky state after abort
     rxDmaInitCount = MAPLE_RX_DMA_BUF_WORDS;
     dma_channel_set_write_addr(rxDmaChannel, rxDmaBuf, false);
     dma_channel_set_trans_count(rxDmaChannel, rxDmaInitCount, false);
     dma_channel_start(rxDmaChannel);
+
+    // Wait for bus idle before enabling RX SM.
+    // Without this, our own TX echo (bus ringing from pull-ups settling)
+    // gets captured as a corrupt packet → CRC fail → XF counter climbs.
+    // Same protection that sendPacket() has before TX (10µs idle check).
+    {
+        uint64_t idleStart = time_us_64();
+        uint64_t deadline = idleStart + 100;  // 100µs timeout (bus should be idle)
+        while (time_us_64() < deadline) {
+            if (!gpio_get(pinA) || !gpio_get(pinB)) {
+                idleStart = time_us_64();  // Reset 10µs window
+            } else if ((time_us_64() - idleStart) >= 10) {
+                break;  // Bus idle for 10µs — safe to listen
+            }
+        }
+    }
 
     // Enable SM — it will wait for sync sequence
     pio_sm_set_enabled(rxPio, rxSm, true);
@@ -376,12 +417,13 @@ uint32_t __no_inline_not_in_flash_func(MapleBus::calcBitPairs)(uint packetSize) 
     return (packetSize - 7) * 4 - 1;
 }
 
-void MapleBus::enableFastPath(MapleFastPathCallback callback) {
+void MapleBus::enableFastPath(MapleFastPathCallback callback, const uint32_t* packetBuf) {
     if (fastPathEnabled || !initialized) return;
 
     fastPathCallback = callback;
+    fastPathPacket = packetBuf;
     irqBusInstance = this;
-    cmd9PreBuilt = false;
+    cmd9TxFired = false;
 
     // Enable PIO IRQ for end-of-packet notification.
     // maple_rx uses `irq wait 0 rel` — SM-relative IRQ 0 maps to PIO IRQ rxSm.
@@ -402,8 +444,9 @@ void MapleBus::disableFastPath() {
     pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), false);
 
     fastPathCallback = nullptr;
+    fastPathPacket = nullptr;
     irqBusInstance = nullptr;
-    cmd9PreBuilt = false;
+    cmd9TxFired = false;
     fastPathEnabled = false;
 }
 
@@ -412,5 +455,13 @@ void __no_inline_not_in_flash_func(MapleBus::clearRxAfterFastPath)() {
     // Disable SM and clear IRQ so sendPacket() → flushRx() → startRx() can restart cleanly.
     pio_sm_set_enabled(rxPio, rxSm, false);
     pio_interrupt_clear(rxPio, rxSm);
+}
+
+void __no_inline_not_in_flash_func(MapleBus::finishFastPathTx)() {
+    // Called from main loop after ISR stuffed TX FIFO directly.
+    // TX PIO SM is running (woke from `pull` when first word was written).
+    // Wait for TX to complete via TXSTALL (SM stalls when FIFO empties after `pull`),
+    // then restart RX for the next incoming packet.
+    flushRx();
 }
 
