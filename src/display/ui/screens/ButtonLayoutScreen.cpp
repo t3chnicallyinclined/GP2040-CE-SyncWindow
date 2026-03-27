@@ -25,19 +25,17 @@ void ButtonLayoutScreen::init() {
 
     setViewport((isInputHistoryEnabled ? 8 : 0), 0, (isInputHistoryEnabled ? 56 : getRenderer()->getDriver()->getMetrics()->height), getRenderer()->getDriver()->getMetrics()->width);
 
-    if (inputMode != INPUT_MODE_DREAMCAST) {
-        uint16_t elementCtr = 0;
-        LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
-        LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
-        for (elementCtr = 0; elementCtr < currLayoutLeft.size(); elementCtr++) {
-            pushElement(currLayoutLeft[elementCtr]);
-        }
-        for (elementCtr = 0; elementCtr < currLayoutRight.size(); elementCtr++) {
-            pushElement(currLayoutRight[elementCtr]);
-        }
+    uint16_t elementCtr = 0;
+    LayoutManager::LayoutList currLayoutLeft = LayoutManager::getInstance().getLayoutA();
+    LayoutManager::LayoutList currLayoutRight = LayoutManager::getInstance().getLayoutB();
+    for (elementCtr = 0; elementCtr < currLayoutLeft.size(); elementCtr++) {
+        pushElement(currLayoutLeft[elementCtr]);
+    }
+    for (elementCtr = 0; elementCtr < currLayoutRight.size(); elementCtr++) {
+        pushElement(currLayoutRight[elementCtr]);
     }
 
-	bannerDisplay = (inputMode != INPUT_MODE_DREAMCAST);
+	bannerDisplay = true;
     prevProfileNumber = -1;
 
     prevLayoutLeft = Storage::getInstance().getDisplayOptions().buttonLayout;
@@ -110,10 +108,8 @@ int8_t ButtonLayoutScreen::update() {
 
     if (prevProfileNumber != profileNumber) {
         prevProfileNumber = profileNumber;
-        if (inputMode != INPUT_MODE_DREAMCAST) {
-            bannerDelayStart = getMillis();
-            bannerDisplay = true;
-        }
+        bannerDelayStart = getMillis();
+        bannerDisplay = true;
     }
 
 	generateHeader();
