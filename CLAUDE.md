@@ -9,7 +9,7 @@ A fork of GP2040-CE v0.7.12 adding two major features:
 2. **Full ISR-Driven Dreamcast Maple Bus** — ALL controller commands handled from PIO end-of-packet interrupt. Pre-computed lookup table for CMD9 (1-2µs response). Zero main loop overhead for Maple Bus during gameplay. See `docs/EXPERT-CONTEXT.md` section 5 for full architecture.
 
 **Repo:** https://github.com/t3chnicallyinclined/GP2040-CE-NOBD
-**Current release:** v0.7.12-nobd-19
+**Current release:** v0.7.12-nobd-20
 **Boards:** RP2040AdvancedBreakoutBoard, Pico, PicoW (RP2040 only — Pico2/RP2350 untested, removed from releases)
 
 For anything not NOBD-specific (pin mapping, addons, SOCD, display, USB modes, etc.), refer to the upstream GP2040-CE docs: https://gp2040-ce.info/
