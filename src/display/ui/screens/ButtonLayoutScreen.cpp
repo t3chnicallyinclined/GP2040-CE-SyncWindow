@@ -315,10 +315,8 @@ void ButtonLayoutScreen::drawScreen() {
 
         // Line 3: response time (packet arrival → sendPacket)
         {
-            const char* mode = dc->zeroLatencyMode ? "ZL" : "STD";
             uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
-            snprintf(buf, sizeof(buf), "%s:%lu-%luus n:%lu",
-                     mode,
+            snprintf(buf, sizeof(buf), "ISR:%lu-%luus n:%lu",
                      (unsigned long)rMin, (unsigned long)dc->respMax,
                      (unsigned long)dc->respCount);
         }
@@ -341,13 +339,8 @@ void ButtonLayoutScreen::drawScreen() {
 	}
 
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver) {
-        if (dcDriver->zeroLatencyMode) {
-            getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
-            getRenderer()->drawText(0, 4, "    ACTIVATED");
-        } else {
-            getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
-            getRenderer()->drawText(0, 4, "   DEACTIVATED");
-        }
+        getRenderer()->drawText(0, 3, "   ZERO-LATENCY");
+        getRenderer()->drawText(0, 4, "      ACTIVE");
     }
 
     getRenderer()->drawText(0, 7, footer);

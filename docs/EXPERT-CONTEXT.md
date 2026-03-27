@@ -240,7 +240,15 @@ Zero Latency reads raw GPIO, bypassing: NOBD sync window (unnecessary at 60Hz DC
 | Zero Latency | ~0µs | ~130-560ns (GPIO read + mapping) |
 | Original Sega controller | ~0µs | Unknown (ASIC internal) |
 
-No other DC controller adapter (MaplePad, GmanModz, raphnet) reads GPIO at response time. All use stored state.
+### Other Adapter Comparison (verified from source code, March 2025)
+
+| Adapter | GPIO at response time? | How verified |
+|---------|----------------------|--------------|
+| MaplePad (RP2040) | **Yes** — `gpio_get()` inside `SendControllerStatus()` | [Source code](https://github.com/mackieks/MaplePad) confirmed |
+| GmanModz (PIC32) | **No** — sends pre-built `buf[]` from earlier `controller_poll()` | [Source code](https://github.com/Gmanmodz/Dreamcast-Controller-Emulator) confirmed |
+| BlueRetro (ESP32) | **No** — reads from `wired_adapter.data[]` buffer populated by Bluetooth polling | [Source code](https://github.com/darthcloud/BlueRetro) confirmed |
+| raphnet (AVR) | Unknown — source not verified | |
+| Brook Retro Board | Unknown — closed source | |
 
 ---
 

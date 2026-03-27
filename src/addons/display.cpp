@@ -225,24 +225,10 @@ void DisplayAddon::process() {
             static uint64_t s1s2HoldStart = 0;
             static bool s1s2Toggled = false;
 
+            // S1+S2 hold: reserved (ZL mode is always on in full ISR architecture)
             if (s1Held && s2Held) {
-                if (s1s2HoldStart == 0) {
-                    s1s2HoldStart = time_us_64();
-                    s1s2Toggled = false;
-                } else if (!s1s2Toggled && (time_us_64() - s1s2HoldStart) >= 3000000) {
-                    dc->zeroLatencyMode = !dc->zeroLatencyMode;
-                    // Update in-memory config so it takes effect immediately.
-                    // Don't write flash here — the ~45ms flash erase stalls Core 0,
-                    // causing the DC to disconnect. Use web UI to persist across reboots.
-                    Storage::getInstance().getGamepadOptions().zeroLatencyMode = dc->zeroLatencyMode;
-                    dc->setFastPath(dc->zeroLatencyMode);
-                    s1s2Toggled = true;
-                    dcDrawDone = false;  // force redraw
-                }
                 s1HoldStart = 0;
                 s1Toggled = true;
-            } else {
-                s1s2HoldStart = 0;
             }
 
             if (s1Held && !s2Held) {

@@ -8,33 +8,141 @@
 
 static DreamcastDriver* irqDriverInstance = nullptr;
 
-static void __no_inline_not_in_flash_func(cmd9GpioCapture)(uint32_t hdr, MapleBus* bus) {
+// ============================================================
+// ISR Command Dispatch — handles ALL Maple Bus commands from ISR
+// ============================================================
+
+void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus* bus) {
     DreamcastDriver* drv = irqDriverInstance;
     if (!drv) return;
 
-    // Pre-computed lookup table path: word 3 (buttons+triggers) and word 5 (CRC)
-    // are already built and waiting. Just stamp them into the packet buffer.
-    // The main loop calls updateCmd9FromGpio() thousands of times per frame,
-    // so cmd9ReadyW3/W5 always reflect the latest GPIO state.
+    uint32_t hdr = bus->rxDmaBuf[0];
+    int8_t cmd = maple_hdr_command(hdr);
+    uint8_t destAddr = maple_hdr_dest(hdr) & MAPLE_PERIPH_MASK;
+    uint8_t port = maple_hdr_origin(hdr) & MAPLE_PORT_MASK;
 
-    // Only header needs dynamic update (port address from DC's request)
+    // Route VMU sub-peripheral commands
+    if (!drv->disableVMU && destAddr == MAPLE_SUB0_ADDR) {
+        if (!drv->vmuReady) return;  // No response — DC will retry
+        drv->isrHandleVmuCommand(cmd, hdr, port, bus);
+        return;
+    }
+
+    // Only handle controller-addressed packets
+    if (destAddr != MAPLE_CTRL_ADDR) return;
+
+    // Compute origin/dest with sub-peripheral bits for response header
     uint8_t subPeriphBits = drv->disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t lastPort = maple_hdr_origin(hdr) & MAPLE_PORT_MASK;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
+    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | port;
+    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
 
-    uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
-    uint32_t w3 = drv->cmd9ReadyW3;
+    switch (cmd) {
+        case MAPLE_CMD_GET_CONDITION: {
+            // Fastest path — pre-computed lookup table.
+            // If port is known and matches cached, use pre-computed W5 (CRC).
+            // Otherwise compute CRC inline (~5 cycles).
+            uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+            uint32_t w3 = drv->cmd9ReadyW3;
 
-    drv->controllerPacketBuf[1] = w1;
-    drv->controllerPacketBuf[3] = w3;
+            drv->controllerPacketBuf[1] = w1;
+            drv->controllerPacketBuf[3] = w3;
 
-    // Recompute CRC with actual header (port may differ from pre-computed default).
-    // This is just 3 XORs + 1 fold — ~5 clock cycles. Still near-instant.
-    uint32_t xorAll = w1 ^ drv->controllerPacketBuf[2] ^ w3 ^ drv->controllerPacketBuf[4];
-    uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
-    drv->controllerPacketBuf[5] = (uint32_t)crc << 24;
+            if (drv->portKnown && port == drv->cachedPort) {
+                // Use pre-computed CRC from lookup table
+                drv->controllerPacketBuf[5] = drv->cmd9ReadyW5;
+            } else {
+                // Compute CRC inline — port changed or not yet cached
+                uint32_t xorAll = w1 ^ drv->controllerPacketBuf[2] ^ w3 ^ drv->controllerPacketBuf[4];
+                uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+                drv->controllerPacketBuf[5] = (uint32_t)crc << 24;
+            }
+
+            bus->isrSendFifo(drv->controllerPacketBuf, 6);
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugCmd9Count++;
+                drv->debugTxCount++;
+                drv->debugTableHits++;
+                drv->debugConsecutivePolls++;
+            }
+            break;
+        }
+
+        case MAPLE_CMD_DEVICE_REQUEST: {
+            // Cache port on first CMD1 — used to pre-compute all packet CRCs
+            if (!drv->portKnown || port != drv->cachedPort) {
+                drv->cachedPort = port;
+                drv->portKnown = true;
+                drv->rebuildAllPacketsForPort(port);
+            }
+            // infoPacketBuf is pre-built with correct port+CRC
+            bus->isrSendDma(drv->infoPacketBuf, 31);
+            drv->vmuReady = true;
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugCmd1Count++;
+                drv->debugTxCount++;
+                if (drv->debugConsecutivePolls > drv->debugMaxConsecutivePolls)
+                    drv->debugMaxConsecutivePolls = drv->debugConsecutivePolls;
+                drv->debugConsecutivePolls = 0;
+            }
+            break;
+        }
+
+        case MAPLE_CMD_ALL_STATUS_REQUEST: {
+            // extInfoBuf pre-built with correct port+CRC
+            bus->isrSendDma(drv->extInfoBuf, 51);
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugTxCount++;
+            }
+            break;
+        }
+
+        case MAPLE_CMD_RESET_DEVICE:
+        case MAPLE_CMD_SHUTDOWN_DEVICE:
+        case MAPLE_CMD_SET_CONDITION: {
+            // ackPacketBuf pre-built with correct port+CRC
+            bus->isrSendFifo(drv->ackPacketBuf, 3);
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugTxCount++;
+            }
+            break;
+        }
+
+        default: {
+            // unknownCmdBuf pre-built with correct port+CRC
+            bus->isrSendFifo(drv->unknownCmdBuf, 3);
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugTxCount++;
+            }
+            break;
+        }
+    }
 }
+
+// ============================================================
+// ISR VMU sub-dispatch
+// ============================================================
+
+void __no_inline_not_in_flash_func(DreamcastDriver::isrHandleVmuCommand)(
+    int8_t cmd, uint32_t hdr, uint8_t port, MapleBus* bus) {
+    // VMU commands are forwarded to DreamcastVMU for ISR handling.
+    // For now, fall through to main loop via isrNvicDisabled — VMU commands
+    // are infrequent (save/load screens only) and can tolerate main loop latency.
+    // TODO: Move VMU command handling into ISR (Phase 3)
+    bus->debugIsrFallthrough++;
+    uint irqNum = (bus->getRxPio() == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+    irq_set_enabled(irqNum, false);
+    bus->isrNvicDisabled = true;
+    bus->isrTxFired = false;  // Don't set — main loop will handle via pollReceive
+}
+
+// ============================================================
+// Helper: build device info string in wire order
+// ============================================================
 
 static void buildDevInfoString(uint32_t* dest, const char* str, uint maxLen) {
     uint8_t buf[64];
@@ -50,8 +158,12 @@ static void buildDevInfoString(uint32_t* dest, const char* str, uint maxLen) {
     }
 }
 
+// ============================================================
+// Constructor + Init
+// ============================================================
+
 DreamcastDriver::DreamcastDriver()
-    : connected(false), lastPort(0) {
+    : connected(false) {
 }
 
 bool DreamcastDriver::init(uint pin_a, uint pin_b) {
@@ -59,12 +171,13 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
 
     const GamepadOptions& options = Storage::getInstance().getGamepadOptions();
     disableVMU = options.disableVMU;
-    zeroLatencyMode = options.zeroLatencyMode;
 
     buildInfoPacket();
+    buildExtInfoPacket();
     buildControllerPacket();
     buildACKPacket();
     buildResendPacket();
+    buildUnknownCmdPacket();
 
     if (!disableVMU) {
         vmu.init();
@@ -73,25 +186,18 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
     buildGpioDcMap();
     buildCmd9LookupTable();
 
-    if (zeroLatencyMode) {
-        setFastPath(true);
-    }
+    // Always enable ISR dispatch — handles ALL commands from ISR.
+    // No STD/ZL mode distinction for DC.
+    irqDriverInstance = this;
+    bus.enableIsrDispatch(isrCommandDispatch);
 
     connected = true;
     return true;
 }
 
-void DreamcastDriver::setFastPath(bool enable) {
-    // Reset timing stats on mode change
-    respLast = 0; respMin = 0xFFFFFFFF; respMax = 0; respCount = 0;
-
-    if (enable) {
-        irqDriverInstance = this;
-        bus.enableFastPath(cmd9GpioCapture, controllerPacketBuf);
-    } else {
-        bus.disableFastPath();
-    }
-}
+// ============================================================
+// GPIO → DC button mapping
+// ============================================================
 
 void DreamcastDriver::buildGpioDcMap() {
     memset(gpioDcButtonMap, 0, sizeof(gpioDcButtonMap));
@@ -133,9 +239,11 @@ void DreamcastDriver::buildGpioDcMap() {
     }
 }
 
+// ============================================================
+// CMD9 Lookup Table — pre-computed W3 (buttons) and W5 (CRC)
+// ============================================================
+
 void DreamcastDriver::buildCmd9LookupTable() {
-    // Build a list of GPIO pins used for buttons (compressed index).
-    // Each bit position in the lookup table index corresponds to one GPIO pin.
     cmd9NumBits = 0;
     memset(cmd9GpioPins, 0, sizeof(cmd9GpioPins));
 
@@ -148,16 +256,22 @@ void DreamcastDriver::buildCmd9LookupTable() {
 
     cmd9TableSize = 1u << cmd9NumBits;
 
-    // Allocate only what's needed — typically 13 buttons = 8192 * 4 = 32KB.
-    // Much better than static 64KB that was blowing the heap.
     if (cmd9TableW3) delete[] cmd9TableW3;
+    if (cmd9TableW5) delete[] cmd9TableW5;
     cmd9TableW3 = new uint32_t[cmd9TableSize];
+    cmd9TableW5 = new uint32_t[cmd9TableSize];
 
-    // For every possible button combination, pre-build word 3.
-    // CRC is recomputed inline at response time (~5 cycles) since the
-    // header varies by port and word 4 (analog) changes at runtime.
+    // Build W3 for every possible button combination.
+    // W5 (CRC) built with default port (0x00). Rebuilt after CMD1 reveals real port.
+    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
+    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits;
+    uint8_t dest   = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK);
+    uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+    uint32_t w2 = maple_host_to_wire(MAPLE_FUNC_CONTROLLER);
+    uint32_t w4 = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
+                | ((uint32_t)0x80 << 8) | 0x80;
+
     for (uint32_t i = 0; i < cmd9TableSize; i++) {
-        // Expand compressed index back to GPIO bitmask
         uint32_t fakeGpio = 0;
         for (uint8_t b = 0; b < cmd9NumBits; b++) {
             if (i & (1u << b)) {
@@ -165,24 +279,52 @@ void DreamcastDriver::buildCmd9LookupTable() {
             }
         }
 
-        // Map to DC buttons using existing function
         uint8_t lt, rt;
         uint16_t dcButtons = mapRawGpioToDC(fakeGpio, &lt, &rt);
 
-        // Word 3: triggers (high bytes) + DC buttons (low bytes)
-        cmd9TableW3[i] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
-                       | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
-                       | (dcButtons & 0xFF);
+        uint32_t w3 = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
+                    | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
+                    | (dcButtons & 0xFF);
+
+        uint32_t xorAll = w1 ^ w2 ^ w3 ^ w4;
+        uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+
+        cmd9TableW3[i] = w3;
+        cmd9TableW5[i] = (uint32_t)crc << 24;
     }
 
-    // Initialize current ready state to "no buttons pressed"
     cmd9ReadyW3 = cmd9TableW3[0];
+    cmd9ReadyW5 = cmd9TableW5[0];
+}
+
+void DreamcastDriver::rebuildCmd9LookupTableForPort() {
+    // Rebuild W5 (CRC) with the real port address after CMD1.
+    // W3 doesn't change — only the header word changes.
+    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
+    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | cachedPort;
+    uint8_t dest   = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | cachedPort;
+    uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+    uint32_t w2 = controllerPacketBuf[2];  // funcCode — constant
+    uint32_t w4 = controllerPacketBuf[4];  // analog — current value
+
+    for (uint32_t i = 0; i < cmd9TableSize; i++) {
+        uint32_t w3 = cmd9TableW3[i];
+        uint32_t xorAll = w1 ^ w2 ^ w3 ^ w4;
+        uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+        cmd9TableW5[i] = (uint32_t)crc << 24;
+    }
+
+    // Update ready values
+    uint32_t raw = ~gpio_get_all();
+    uint32_t index = 0;
+    for (uint8_t b = 0; b < cmd9NumBits; b++) {
+        if (raw & (1u << cmd9GpioPins[b])) index |= (1u << b);
+    }
+    cmd9ReadyW3 = cmd9TableW3[index];
+    cmd9ReadyW5 = cmd9TableW5[index];
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)() {
-    // Called every main loop cycle — thousands of times per DC frame.
-    // Compresses current GPIO state to lookup table index,
-    // then stores the pre-built packet words for instant ISR pickup.
     uint32_t raw = ~gpio_get_all();
     uint32_t index = 0;
     for (uint8_t b = 0; b < cmd9NumBits; b++) {
@@ -191,11 +333,10 @@ void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)() {
         }
     }
     cmd9ReadyW3 = cmd9TableW3[index];
+    cmd9ReadyW5 = cmd9TableW5[index];
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::updateAnalogFromGamepad)(Gamepad* gamepad) {
-    // Keep word 4 (analog axes) current so the ISR fast path sends correct stick values.
-    // Sticks update once per 16ms pipeline tick — that's fine, no sub-ms need here.
     uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
     uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
     uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
@@ -220,6 +361,29 @@ uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapRawGpioToDC)(
     return dc;
 }
 
+uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t gpButtons, uint8_t dpad) {
+    uint16_t dc = 0xFFFF;
+
+    if (gpButtons & GAMEPAD_MASK_B1) dc &= ~DC_BTN_A;
+    if (gpButtons & GAMEPAD_MASK_B2) dc &= ~DC_BTN_B;
+    if (gpButtons & GAMEPAD_MASK_B3) dc &= ~DC_BTN_X;
+    if (gpButtons & GAMEPAD_MASK_B4) dc &= ~DC_BTN_Y;
+    if (gpButtons & GAMEPAD_MASK_L1) dc &= ~DC_BTN_C;
+    if (gpButtons & GAMEPAD_MASK_R1) dc &= ~DC_BTN_Z;
+    if (gpButtons & GAMEPAD_MASK_S2) dc &= ~DC_BTN_START;
+
+    if (dpad & GAMEPAD_MASK_UP)    dc &= ~DC_BTN_UP;
+    if (dpad & GAMEPAD_MASK_DOWN)  dc &= ~DC_BTN_DOWN;
+    if (dpad & GAMEPAD_MASK_LEFT)  dc &= ~DC_BTN_LEFT;
+    if (dpad & GAMEPAD_MASK_RIGHT) dc &= ~DC_BTN_RIGHT;
+
+    return dc;
+}
+
+// ============================================================
+// Packet Builders — called at init, rebuild after CMD1 for port
+// ============================================================
+
 void DreamcastDriver::buildInfoPacket() {
     memset(infoPacketBuf, 0, sizeof(infoPacketBuf));
 
@@ -227,18 +391,6 @@ void DreamcastDriver::buildInfoPacket() {
     infoPacketBuf[1] = maple_make_header(
         28, MAPLE_CTRL_ADDR, MAPLE_DC_ADDR, MAPLE_CMD_RESPOND_DEVICE_STATUS
     );
-
-    uint32_t* info = &infoPacketBuf[2];
-
-    info[0] = maple_host_to_wire(MAPLE_FUNC_CONTROLLER);
-    info[1] = maple_host_to_wire(0x000F07FF);
-    info[2] = 0;
-    info[3] = 0;
-    info[4] = maple_host_to_wire((uint32_t)0xFF << 24);
-
-    buildDevInfoString(&info[5], "GP2040-CE NOBD Controller", 30);
-    buildDevInfoString(&info[5], "GP2040-CE NOBD Controller     ", 32);
-    buildDevInfoString(&info[13], "Open Source - github.com/OpenStickCommunity              ", 60);
 
     uint8_t infoBuf[112];
     memset(infoBuf, 0, sizeof(infoBuf));
@@ -276,6 +428,7 @@ void DreamcastDriver::buildInfoPacket() {
     infoBuf[110] = maxPwr & 0xFF;
     infoBuf[111] = (maxPwr >> 8) & 0xFF;
 
+    uint32_t* info = &infoPacketBuf[2];
     for (int i = 0; i < 28; i++) {
         uint32_t hostWord = infoBuf[i*4]
                           | ((uint32_t)infoBuf[i*4+1] << 8)
@@ -283,6 +436,19 @@ void DreamcastDriver::buildInfoPacket() {
                           | ((uint32_t)infoBuf[i*4+3] << 24);
         info[i] = __builtin_bswap32(hostWord);
     }
+
+    infoPacketBuf[30] = MapleBus::calcCRC(&infoPacketBuf[1], 29);
+}
+
+void DreamcastDriver::buildExtInfoPacket() {
+    memset(extInfoBuf, 0, sizeof(extInfoBuf));
+    extInfoBuf[0] = MapleBus::calcBitPairs(sizeof(extInfoBuf));
+    extInfoBuf[1] = maple_make_header(
+        48, MAPLE_CTRL_ADDR, MAPLE_DC_ADDR, MAPLE_CMD_RESPOND_ALL_STATUS
+    );
+    // Copy device info payload from infoPacketBuf
+    memcpy(&extInfoBuf[2], &infoPacketBuf[2], 28 * sizeof(uint32_t));
+    extInfoBuf[50] = MapleBus::calcCRC(&extInfoBuf[1], 49);
 }
 
 void DreamcastDriver::buildControllerPacket() {
@@ -302,137 +468,71 @@ void DreamcastDriver::buildControllerPacket() {
 
 void DreamcastDriver::buildACKPacket() {
     memset(ackPacketBuf, 0, sizeof(ackPacketBuf));
-
     ackPacketBuf[0] = MapleBus::calcBitPairs(sizeof(ackPacketBuf));
     ackPacketBuf[1] = maple_make_header(
         0, MAPLE_CTRL_ADDR, MAPLE_DC_ADDR, MAPLE_CMD_RESPOND_ACK
     );
+    ackPacketBuf[2] = MapleBus::calcCRC(&ackPacketBuf[1], 1);
 }
 
 void DreamcastDriver::buildResendPacket() {
     memset(resendPacketBuf, 0, sizeof(resendPacketBuf));
-
     resendPacketBuf[0] = MapleBus::calcBitPairs(sizeof(resendPacketBuf));
     resendPacketBuf[1] = maple_make_header(
         0, MAPLE_CTRL_ADDR, MAPLE_DC_ADDR, MAPLE_CMD_RESPOND_SEND_AGAIN
     );
-}
-
-void __no_inline_not_in_flash_func(DreamcastDriver::sendResendRequest)() {
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-    resendPacketBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_SEND_AGAIN);
     resendPacketBuf[2] = MapleBus::calcCRC(&resendPacketBuf[1], 1);
-    bus.sendPacket(resendPacketBuf, 3);
 }
 
-uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapButtonsToDC)(uint32_t gpButtons, uint8_t dpad) {
-    uint16_t dc = 0xFFFF;
-
-    if (gpButtons & GAMEPAD_MASK_B1) dc &= ~DC_BTN_A;
-    if (gpButtons & GAMEPAD_MASK_B2) dc &= ~DC_BTN_B;
-    if (gpButtons & GAMEPAD_MASK_B3) dc &= ~DC_BTN_X;
-    if (gpButtons & GAMEPAD_MASK_B4) dc &= ~DC_BTN_Y;
-    if (gpButtons & GAMEPAD_MASK_L1) dc &= ~DC_BTN_C;
-    if (gpButtons & GAMEPAD_MASK_R1) dc &= ~DC_BTN_Z;
-    if (gpButtons & GAMEPAD_MASK_S2) dc &= ~DC_BTN_START;
-
-    if (dpad & GAMEPAD_MASK_UP)    dc &= ~DC_BTN_UP;
-    if (dpad & GAMEPAD_MASK_DOWN)  dc &= ~DC_BTN_DOWN;
-    if (dpad & GAMEPAD_MASK_LEFT)  dc &= ~DC_BTN_LEFT;
-    if (dpad & GAMEPAD_MASK_RIGHT) dc &= ~DC_BTN_RIGHT;
-
-    return dc;
+void DreamcastDriver::buildUnknownCmdPacket() {
+    memset(unknownCmdBuf, 0, sizeof(unknownCmdBuf));
+    unknownCmdBuf[0] = MapleBus::calcBitPairs(sizeof(unknownCmdBuf));
+    unknownCmdBuf[1] = maple_make_header(
+        0, MAPLE_CTRL_ADDR, MAPLE_DC_ADDR, MAPLE_CMD_RESPOND_UNKNOWN_CMD
+    );
+    unknownCmdBuf[2] = MapleBus::calcCRC(&unknownCmdBuf[1], 1);
 }
 
-void __no_inline_not_in_flash_func(DreamcastDriver::sendControllerState)(Gamepad* gamepad) {
+// ============================================================
+// Rebuild all static packets after CMD1 reveals the real port
+// ============================================================
+
+void DreamcastDriver::rebuildAllPacketsForPort(uint8_t port) {
     uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
+    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | port;
+    uint8_t dest   = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
 
-    controllerPacketBuf[1] = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
-
-    if (zeroLatencyMode) {
-        // Use pre-built lookup table word — updateCmd9FromGpio() runs every tight loop
-        // iteration so cmd9ReadyW3 is fresher than a new gpio_get_all() call here.
-        controllerPacketBuf[3] = cmd9ReadyW3;
-        if (enableDiagnostics) debugTableHits++;
-    } else {
-        uint32_t buttons = gamepad->state.buttons;
-        uint8_t  dpad    = gamepad->state.dpad;
-        uint8_t lt = gamepad->state.lt;
-        uint8_t rt = gamepad->state.rt;
-        if (lt == 0 && (buttons & GAMEPAD_MASK_L2)) lt = 255;
-        if (rt == 0 && (buttons & GAMEPAD_MASK_R2)) rt = 255;
-
-        uint16_t dcButtons = mapButtonsToDC(buttons, dpad);
-        controllerPacketBuf[3] = ((uint32_t)lt << 24) | ((uint32_t)rt << 16)
-                               | ((uint32_t)((dcButtons >> 8) & 0xFF) << 8)
-                               | (dcButtons & 0xFF);
-    }
-
-    uint32_t lx32 = (uint32_t)gamepad->state.lx + 0x80;
-    uint32_t ly32 = (uint32_t)gamepad->state.ly + 0x80;
-    uint8_t jx = (uint8_t)(lx32 > 0xFFFF ? 0xFF : (lx32 >> 8));
-    uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
-
-    controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
-                           | ((uint32_t)jy << 8) | jx;
-
-    controllerPacketBuf[5] = MapleBus::calcCRC(&controllerPacketBuf[1], 4);
-
-    bus.sendPacket(controllerPacketBuf, 6);
-}
-
-void __no_inline_not_in_flash_func(DreamcastDriver::sendInfoResponse)() {
-    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-
+    // Info packet (CMD1 response)
     infoPacketBuf[1] = maple_make_header(28, origin, dest, MAPLE_CMD_RESPOND_DEVICE_STATUS);
     infoPacketBuf[30] = MapleBus::calcCRC(&infoPacketBuf[1], 29);
-    bus.sendPacket(infoPacketBuf, 31);
-}
 
-void __no_inline_not_in_flash_func(DreamcastDriver::sendExtInfoResponse)() {
-    static uint32_t extInfoBuf[51];
-    memset(extInfoBuf, 0, sizeof(extInfoBuf));
-
-    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-
-    extInfoBuf[0] = MapleBus::calcBitPairs(sizeof(extInfoBuf));
+    // Extended info (CMD2 response)
     extInfoBuf[1] = maple_make_header(48, origin, dest, MAPLE_CMD_RESPOND_ALL_STATUS);
-
-    memcpy(&extInfoBuf[2], &infoPacketBuf[2], 28 * sizeof(uint32_t));
-
     extInfoBuf[50] = MapleBus::calcCRC(&extInfoBuf[1], 49);
-    bus.sendPacket(extInfoBuf, 51);
-}
 
-void __no_inline_not_in_flash_func(DreamcastDriver::sendACKResponse)() {
-    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-
+    // ACK (CMD3/4/14 response)
     ackPacketBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_ACK);
     ackPacketBuf[2] = MapleBus::calcCRC(&ackPacketBuf[1], 1);
-    bus.sendPacket(ackPacketBuf, 3);
+
+    // Resend request
+    uint8_t resendOrigin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | port;
+    resendPacketBuf[1] = maple_make_header(0, resendOrigin, dest, MAPLE_CMD_RESPOND_SEND_AGAIN);
+    resendPacketBuf[2] = MapleBus::calcCRC(&resendPacketBuf[1], 1);
+
+    // Unknown command response
+    unknownCmdBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_UNKNOWN_CMD);
+    unknownCmdBuf[2] = MapleBus::calcCRC(&unknownCmdBuf[1], 1);
+
+    // Controller state header (word 1 — used by ISR for CMD9)
+    controllerPacketBuf[1] = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+
+    // Rebuild CMD9 lookup table CRC with real port
+    rebuildCmd9LookupTableForPort();
 }
 
-void __no_inline_not_in_flash_func(DreamcastDriver::sendUnknownCommandResponse)() {
-    static uint32_t unknownBuf[3];
-
-    unknownBuf[0] = MapleBus::calcBitPairs(sizeof(unknownBuf));
-    uint8_t subPeriphBits = disableVMU ? 0 : MAPLE_SUB0_ADDR;
-    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | lastPort;
-    uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | lastPort;
-
-    unknownBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_UNKNOWN_CMD);
-    unknownBuf[2] = MapleBus::calcCRC(&unknownBuf[1], 1);
-    bus.sendPacket(unknownBuf, 3);
-}
+// ============================================================
+// Simplified process() — ISR handles all commands, main loop just cleans up
+// ============================================================
 
 void DreamcastDriver::processAux() {
 }
@@ -447,116 +547,46 @@ void __no_inline_not_in_flash_func(DreamcastDriver::process)(Gamepad* gamepad) {
 
     if (diag) debugXorFail = bus.debugXorFail;
 
-    if (bus.cmd9TxFired) {
-        bus.cmd9TxFired = false;
-        // TX was already fired from ISR via FIFO writes.
-        // Just wait for TX PIO to finish and restart RX.
-        bus.finishFastPathTx();
+    // ISR sent a response — wait for TX to complete and restart RX.
+    if (bus.isrTxFired) {
+        bus.isrTxFired = false;
+        bus.finishIsrTx();
         if (diag) {
-            // Response time = how fast we responded (ISR arrival → TX FIFO written).
-            // Wire time (~65-92µs) is not included — that's protocol physics,
-            // identical for all controllers.
             uint32_t elapsed = bus.isrTxStartTimestamp - bus.rxArrivalTimestamp;
             respLast = elapsed;
             if (elapsed < respMin) respMin = elapsed;
             if (elapsed > respMax) respMax = elapsed;
             respCount++;
-            debugRxCount++;
-            debugCmd9Count++; debugTxCount++;
-            debugTableHits++;
         }
         return;
     }
 
-    const uint8_t* packet = nullptr;
-    uint rxLen = 0;
+    // ISR couldn't handle the packet (VMU command, CRC fail) — main loop handles.
+    if (bus.isrNvicDisabled) {
+        const uint8_t* packet = nullptr;
+        uint rxLen = 0;
+        bool gotPacket = bus.pollReceive(&packet, &rxLen);
 
-    // In ZL mode with ISR armed: only call pollReceive() when the ISR flagged
-    // a non-CMD9 packet (isrNvicDisabled). Otherwise there's nothing to poll —
-    // CMD9 is handled by the ISR, and calling pollReceive() on an idle bus
-    // can pick up noise/echo as corrupt packets, causing spurious XF + RESEND.
-    if (zeroLatencyMode && !bus.isrNvicDisabled) return;
-
-    bool gotPacket = bus.pollReceive(&packet, &rxLen);
-
-    if (!gotPacket && bus.wasLastRxCorrupt()) {
-        sendResendRequest();
-        waitTxFlushRx();
-        if (diag) debugResendCount++;
-        return;
-    }
-
-    if (gotPacket && rxLen >= 4) {
-
-        uint32_t hdrWord = ((const uint32_t*)packet)[0];
-        int8_t cmd = maple_hdr_command(hdrWord);
-        uint8_t destAddr = maple_hdr_dest(hdrWord) & MAPLE_PERIPH_MASK;
-        lastPort = maple_hdr_origin(hdrWord) & MAPLE_PORT_MASK;
-
-        if (!disableVMU && destAddr == MAPLE_SUB0_ADDR) {
-            if (!vmuReady) return;
-            if (vmu.handleCommand(packet, rxLen, lastPort, bus)) {
-                waitTxFlushRx();
-            }
+        if (!gotPacket && bus.wasLastRxCorrupt()) {
+            // CRC fail on incoming — send RESEND
+            bus.sendPacket(resendPacketBuf, 3);
+            waitTxFlushRx();
+            if (diag) debugResendCount++;
             return;
         }
 
-        if (destAddr != MAPLE_CTRL_ADDR) return;
+        if (gotPacket && rxLen >= 4) {
+            uint32_t hdrWord = ((const uint32_t*)packet)[0];
+            uint8_t destAddr = maple_hdr_dest(hdrWord) & MAPLE_PERIPH_MASK;
+            uint8_t port = maple_hdr_origin(hdrWord) & MAPLE_PORT_MASK;
 
-        if (diag) debugRxCount++;
-
-        switch (cmd) {
-            case MAPLE_CMD_DEVICE_REQUEST:
-                if (diag) {
-                    debugCmd1Count++;
-                    if (debugConsecutivePolls > debugMaxConsecutivePolls)
-                        debugMaxConsecutivePolls = debugConsecutivePolls;
-                    debugConsecutivePolls = 0;
+            // VMU commands — route to existing handleCommand
+            if (!disableVMU && destAddr == MAPLE_SUB0_ADDR) {
+                if (vmuReady && vmu.handleCommand(packet, rxLen, port, bus)) {
+                    waitTxFlushRx();
                 }
-                sendInfoResponse();
-                waitTxFlushRx();
-                if (diag) debugTxCount++;
-                vmuReady = true;
-                break;
-
-            case MAPLE_CMD_ALL_STATUS_REQUEST:
-                sendExtInfoResponse();
-                waitTxFlushRx();
-                if (diag) debugTxCount++;
-                break;
-
-            case MAPLE_CMD_GET_CONDITION:
-                sendControllerState(gamepad);
-                if (diag) {
-                    uint32_t elapsed = timer_hw->timerawl - bus.rxArrivalTimestamp;
-                    respLast = elapsed;
-                    if (elapsed < respMin) respMin = elapsed;
-                    if (elapsed > respMax) respMax = elapsed;
-                    respCount++;
-                    debugCmd9Count++; debugConsecutivePolls++;
-                    debugTxCount++;
-                }
-                waitTxFlushRx();
-                break;
-
-            case MAPLE_CMD_RESET_DEVICE:
-            case MAPLE_CMD_SHUTDOWN_DEVICE:
-                sendACKResponse();
-                waitTxFlushRx();
-                if (diag) debugTxCount++;
-                break;
-
-            case MAPLE_CMD_SET_CONDITION:
-                sendACKResponse();
-                waitTxFlushRx();
-                if (diag) debugTxCount++;
-                break;
-
-            default:
-                sendUnknownCommandResponse();
-                waitTxFlushRx();
-                if (diag) debugTxCount++;
-                break;
+                return;
+            }
         }
     }
 }

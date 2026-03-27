@@ -13,7 +13,10 @@
 
 // Forward declaration for callback type
 class MapleBus;
-typedef void (*MapleFastPathCallback)(uint32_t hdr, MapleBus* bus);
+// ISR callback: called from mapleRxIrqHandler after CRC validation.
+// Receives the bus instance (rxDmaBuf has the validated packet).
+// Must be __no_inline_not_in_flash_func.
+typedef void (*MapleIsrCallback)(MapleBus* bus);
 
 // Maple Bus addressing
 #define MAPLE_DC_ADDR        0x00
@@ -130,36 +133,37 @@ public:
     // Automatically clears the flag after reading.
     bool wasLastRxCorrupt() { bool v = lastRxWasCorrupt; lastRxWasCorrupt = false; return v; }
 
-    // Set by ISR when CMD9 response was sent directly via PIO FIFO writes.
-    // Main loop must call finishFastPathTx() to wait for TX completion + restart RX.
-    volatile bool cmd9TxFired = false;
+    // Set by ISR after sending a response (FIFO or DMA). Main loop must call
+    // finishIsrTx() to wait for TX completion and restart RX.
+    volatile bool isrTxFired = false;
 
     // Main loop cleanup after ISR-initiated TX.
-    void finishFastPathTx();
+    void finishIsrTx();
 
-    // Set by ISR when a non-CMD9 packet arrives. The ISR disables the NVIC interrupt
-    // to prevent re-entry (PIO IRQ flag is left set for pollReceive). startRx() re-enables.
+    // Set by ISR when a packet fails CRC or can't be handled. ISR disables NVIC
+    // to prevent re-entry. PIO IRQ flag left set for pollReceive(). startRx() re-enables.
     volatile bool isrNvicDisabled = false;
 
-    // Packet arrival timestamp — set when end-of-packet IRQ flag is first detected.
+    // Timestamps for response time measurement.
     volatile uint32_t rxArrivalTimestamp = 0;
-
-    // ISR TX start timestamp — set right after FIFO writes in ISR fast path.
-    // Elapsed = isrTxStartTimestamp - rxArrivalTimestamp = actual response time.
     volatile uint32_t isrTxStartTimestamp = 0;
 
-    // Fast-path callback: called from ISR to capture GPIO and build response.
-    // Must be __no_inline_not_in_flash_func. Set by DreamcastDriver::init().
-    MapleFastPathCallback fastPathCallback = nullptr;
+    // ISR callback: dispatches all commands. Set by enableIsrDispatch().
+    MapleIsrCallback isrCallback = nullptr;
 
-    // Pointer to the pre-built packet buffer (set by enableFastPath).
-    // ISR reads this to stuff TX FIFO directly.
-    const uint32_t* fastPathPacket = nullptr;
+    // Number of words received in current packet (set by ISR for callback use).
+    volatile uint32_t isrWordsReceived = 0;
 
-    // Enable/disable the PIO IRQ path. packetBuf must point to the 6-word
-    // controller response buffer that the callback populates (read by ISR for FIFO TX).
-    void enableFastPath(MapleFastPathCallback callback, const uint32_t* packetBuf);
-    void disableFastPath();
+    // Enable/disable ISR-driven command dispatch.
+    void enableIsrDispatch(MapleIsrCallback callback);
+    void disableIsrDispatch();
+
+    // ISR TX helpers — called from the ISR callback to send responses.
+    // isrSendFifo: stuff ≤8 words directly into PIO TX FIFO. Fastest path.
+    // isrSendDma: fire TX DMA for >8 word packets.
+    // Both set isrTxFired and stamp isrTxStartTimestamp.
+    void isrSendFifo(const uint32_t* pkt, uint count);
+    void isrSendDma(const uint32_t* pkt, uint count);
 
     // Debug counters (only updated when enableDiagnostics == true)
     bool enableDiagnostics = false;
@@ -179,6 +183,9 @@ public:
     uint32_t rxDmaInitCount;  // Initial DMA transfer count (for computing words received)
     uint rxDmaChannel;
 
+    // TX DMA channel — public for ISR DMA TX access.
+    uint txDmaChannel;
+
 private:
     PIO txPio;
     PIO rxPio;
@@ -186,7 +193,6 @@ private:
     uint txSmOffset;  // TX program offset (needed for SM recovery on timeout)
     uint rxSm;
     uint rxSmOffset;  // RX program offset (needed for SM restart)
-    uint txDmaChannel;
     uint pinA;
     uint pinB;
 

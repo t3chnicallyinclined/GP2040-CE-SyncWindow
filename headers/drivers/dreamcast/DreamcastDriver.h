@@ -29,10 +29,8 @@ public:
     bool isConnected() { return connected; }
 
     bool enableDiagnostics = false;
-    bool zeroLatencyMode = false;
-    void setFastPath(bool enable);
 
-    // Debug counters (only updated when enableDiagnostics == true)
+    // Debug counters
     uint32_t debugRxCount = 0;
     uint32_t debugTxCount = 0;
     uint32_t debugXorFail = 0;
@@ -41,11 +39,10 @@ public:
     uint32_t debugConsecutivePolls = 0;
     uint32_t debugMaxConsecutivePolls = 0;
     uint32_t debugResendCount = 0;
-    uint32_t debugTableHits = 0;    // CMD9 responses served from lookup table (ZL mode)
+    uint32_t debugTableHits = 0;
 
-    // Response timing (only updated when enableDiagnostics == true)
-    // Measures from packet arrival (rxArrivalTimestamp) to sendPacket()
-    volatile uint32_t respLast = 0;       // Last response time in µs
+    // Response timing
+    volatile uint32_t respLast = 0;
     volatile uint32_t respMin = 0xFFFFFFFF;
     volatile uint32_t respMax = 0;
     volatile uint32_t respCount = 0;
@@ -64,43 +61,57 @@ public:
 
     // Pre-computed CMD9 response lookup table.
     // Index = compressed GPIO button state (sized to actual button count at init).
-    // Each entry stores word 3 (buttons+triggers). CRC is recomputed inline (~5 cycles).
-    // Words 0,1,2,4 are constant across all entries.
-    // Eliminates button mapping from CMD9 response path.
-    uint32_t* cmd9TableW3 = nullptr;        // Word 3: triggers + buttons per state
-    uint32_t  cmd9TableSize = 0;            // Actual table entries (1 << cmd9NumBits)
-    uint8_t   cmd9GpioPins[13];             // GPIO pin numbers in compressed order
-    uint8_t   cmd9NumBits = 0;              // Number of button GPIO pins (max 13)
-    volatile uint32_t cmd9ReadyW3;          // Current word 3 (updated every main loop)
+    // W3 = buttons+triggers, W5 = CRC (pre-computed with cached port + constant W4).
+    uint32_t* cmd9TableW3 = nullptr;
+    uint32_t* cmd9TableW5 = nullptr;        // Restored: CRC pre-computed per button state
+    uint32_t  cmd9TableSize = 0;
+    uint8_t   cmd9GpioPins[13];
+    uint8_t   cmd9NumBits = 0;
+    volatile uint32_t cmd9ReadyW3;
+    volatile uint32_t cmd9ReadyW5;          // Pre-computed CRC for current button state
     void buildCmd9LookupTable();
+    void rebuildCmd9LookupTableForPort();   // Rebuild with real port after CMD1
     void updateCmd9FromGpio();
     void updateAnalogFromGamepad(Gamepad* gamepad);
 
+    // Cached port from CMD1 — never changes after initial handshake.
+    // Used to pre-compute all packet headers and CRCs.
+    uint8_t cachedPort = 0;
+    bool portKnown = false;
+
+    // Pre-built packet buffers — all public for ISR access.
+    // Headers and CRCs are pre-computed with cachedPort after first CMD1.
     MapleBus bus;
     uint32_t controllerPacketBuf[6];
+    uint32_t infoPacketBuf[31];
+    uint32_t extInfoBuf[51];
+    uint32_t ackPacketBuf[3];
+    uint32_t resendPacketBuf[3];
+    uint32_t unknownCmdBuf[3];
 
     // Public for ISR callback access
     uint16_t mapRawGpioToDC(uint32_t rawGpio, uint8_t* outLT, uint8_t* outRT);
 
-private:
-    uint32_t infoPacketBuf[31];
-    uint32_t ackPacketBuf[3];
-    uint32_t resendPacketBuf[3];
+    // Rebuild all static packet headers+CRCs after port is known from CMD1.
+    void rebuildAllPacketsForPort(uint8_t port);
 
+    // ISR command dispatch — handles ALL Maple Bus commands from ISR context.
+    // Registered via bus.enableIsrDispatch() at init.
+    static void __no_inline_not_in_flash_func(isrCommandDispatch)(MapleBus* bus);
+
+    // ISR VMU sub-dispatch
+    void isrHandleVmuCommand(int8_t cmd, uint32_t hdr, uint8_t port, MapleBus* bus);
+
+private:
     bool connected;
-    uint8_t lastPort;
 
     void buildInfoPacket();
+    void buildExtInfoPacket();
     void buildControllerPacket();
     void buildACKPacket();
     void buildResendPacket();
+    void buildUnknownCmdPacket();
 
-    void sendControllerState(Gamepad* gamepad);
-    void sendInfoResponse();
-    void sendExtInfoResponse();
-    void sendACKResponse();
-    void sendResendRequest();
-    void sendUnknownCommandResponse();
     void waitTxFlushRx();
     uint16_t mapButtonsToDC(uint32_t gpButtons, uint8_t dpad);
 };

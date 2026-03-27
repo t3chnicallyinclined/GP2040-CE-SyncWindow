@@ -423,14 +423,11 @@ void GP2040::run() {
 
 		checkSaveRebootState();
 
-		if (dcMode && dcDriver->zeroLatencyMode) {
-			uint64_t nextPipeline = time_us_64() + 16000;
-			dcDriver->updateAnalogFromGamepad(gamepad);  // Keep word 4 current for ISR
-			while (dcDriver->zeroLatencyMode) {
-				dcDriver->updateCmd9FromGpio();  // Keep word 3 current for ISR
-				dcDriver->process(gamepad);
-				if (time_us_64() >= nextPipeline) break;
-			}
+		// DC mode: ISR handles all commands. Main loop just keeps
+		// lookup table + analog current and does ISR TX cleanup.
+		if (dcMode) {
+			dcDriver->updateCmd9FromGpio();
+			dcDriver->updateAnalogFromGamepad(gamepad);
 		}
 	}
 }
