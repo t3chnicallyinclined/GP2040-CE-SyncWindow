@@ -47,6 +47,44 @@ public:
     volatile uint32_t respMax = 0;
     volatile uint32_t respCount = 0;
 
+    // Frame interval tracking (CMD9-to-CMD9 delta)
+    volatile uint32_t prevCmd9Timestamp = 0;
+    volatile uint32_t frameIntervalLast = 0;
+    volatile uint32_t frameIntervalMin = 0xFFFFFFFF;
+    volatile uint32_t frameIntervalMax = 0;
+    volatile uint32_t frameCount = 0;
+    volatile uint32_t droppedPollCount = 0;     // Intervals > 20ms
+
+    // CMD14 (vibrate / SET_CONDITION) tracking
+    volatile uint32_t cmd14Count = 0;           // Total CMD14s received
+    volatile uint32_t cmd14LastTimestamp = 0;    // When last CMD14 arrived
+    volatile uint32_t cmd14PrevTimestamp = 0;    // Previous CMD14 arrival (for interval)
+    volatile uint32_t cmd14IntervalLast = 0;     // Last CMD14-to-CMD14 interval (us)
+    volatile uint16_t cmd14LastPayload = 0;      // Last vibrate motor values (m0<<8|m1)
+    volatile uint32_t cmd14BurstCount = 0;       // CMD14s within 100ms of each other
+    volatile uint32_t cmd14BurstStart = 0;       // First CMD14 timestamp in current burst
+    volatile uint32_t cmd14LongestBurst = 0;     // Longest burst seen (count)
+    volatile uint32_t cmd14SilenceSince = 0;     // Timestamp of last CMD9 after CMD14 silence begins
+
+    // CMD14 event log ring buffer (for vibrate fingerprinting)
+    static constexpr uint8_t CMD14_LOG_SIZE = 64;
+    struct Cmd14LogEntry {
+        uint32_t timestamp;     // us since boot
+        uint16_t payload;       // motor0 << 8 | motor1
+        uint16_t intervalUs;    // time since previous CMD14 (capped at 0xFFFF)
+    };
+    Cmd14LogEntry cmd14Log[CMD14_LOG_SIZE];
+    volatile uint8_t cmd14LogIdx = 0;
+    volatile uint8_t cmd14LogCount = 0;
+
+    // Button-to-poll latency
+    volatile uint32_t buttonChangeTimestamp = 0;
+    volatile uint32_t b2pLast = 0;
+    volatile uint32_t b2pMin = 0xFFFFFFFF;
+    volatile uint32_t b2pMax = 0;
+    volatile uint32_t b2pCount = 0;
+    volatile bool b2pPending = false;
+
     bool disableVMU = false;
     bool vmuReady = false;
 

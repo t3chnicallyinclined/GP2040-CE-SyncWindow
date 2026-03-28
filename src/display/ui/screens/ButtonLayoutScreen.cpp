@@ -295,41 +295,53 @@ void ButtonLayoutScreen::drawScreen() {
         // Clear widget remnants before drawing diagnostics
         getRenderer()->clearScreen();
 
-        snprintf(buf, sizeof(buf), "Rx:%lu Tx:%lu XF:%lu",
-                 (unsigned long)dc->debugRxCount,
-                 (unsigned long)dc->debugTxCount,
-                 (unsigned long)dc->debugXorFail);
+        // Line 0: Frame interval + jitter + dropped polls
+        {
+            uint32_t fMin = (dc->frameIntervalMin == 0xFFFFFFFF) ? 0 : dc->frameIntervalMin;
+            uint32_t fMax = dc->frameIntervalMax;
+            snprintf(buf, sizeof(buf), "F:%lu-%luus D:%lu",
+                     (unsigned long)fMin, (unsigned long)fMax,
+                     (unsigned long)dc->droppedPollCount);
+        }
         getRenderer()->drawText(0, 0, std::string(buf));
 
+        // Line 1: ISR response time + button-to-poll latency
+        {
+            uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
+            uint32_t bMin = (dc->b2pMin == 0xFFFFFFFF) ? 0 : dc->b2pMin;
+            uint32_t bMax = dc->b2pMax;
+            snprintf(buf, sizeof(buf), "ISR:%luus B2P:%lu-%luus",
+                     (unsigned long)rMin,
+                     (unsigned long)bMin, (unsigned long)bMax);
+        }
+        getRenderer()->drawText(0, 1, std::string(buf));
+
+        // Line 2: CMD14 vibrate tracking
+        snprintf(buf, sizeof(buf), "v14:%lu p:%04X i:%lu",
+                 (unsigned long)dc->cmd14Count,
+                 (unsigned int)dc->cmd14LastPayload,
+                 (unsigned long)(dc->cmd14IntervalLast / 1000));  // interval in ms
+        getRenderer()->drawText(0, 2, std::string(buf));
+
+        // Line 3: Vibrate burst info
+        snprintf(buf, sizeof(buf), "burst:%lu max:%lu log:%u",
+                 (unsigned long)dc->cmd14BurstCount,
+                 (unsigned long)dc->cmd14LongestBurst,
+                 (unsigned)dc->cmd14LogCount);
+        getRenderer()->drawText(0, 3, std::string(buf));
+
+        // Line 4: cmd9 count + XF + counters
+        snprintf(buf, sizeof(buf), "c9:%lu XF:%lu Rx:%lu",
+                 (unsigned long)dc->debugCmd9Count,
+                 (unsigned long)dc->debugXorFail,
+                 (unsigned long)dc->debugRxCount);
+        getRenderer()->drawText(0, 4, std::string(buf));
+
+        // Line 5: VMU stats
         snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu fw:%lu",
                  (unsigned long)dc->vmu.debugVmuReadOkCount,
                  (unsigned long)dc->vmu.debugVmuReadErrCount,
                  (unsigned long)dc->vmu.debugVmuFlashCount);
-        getRenderer()->drawText(0, 1, std::string(buf));
-
-        snprintf(buf, sizeof(buf), "Vr:%lu Vt:%lu",
-                 (unsigned long)dc->vmu.debugVmuRxCount,
-                 (unsigned long)dc->vmu.debugVmuTxCount);
-        getRenderer()->drawText(0, 2, std::string(buf));
-
-        // Line 3: response time (packet arrival → sendPacket)
-        {
-            uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
-            snprintf(buf, sizeof(buf), "ISR:%lu-%luus n:%lu",
-                     (unsigned long)rMin, (unsigned long)dc->respMax,
-                     (unsigned long)dc->respCount);
-        }
-        getRenderer()->drawText(0, 3, std::string(buf));
-
-        // Line 4: cmd9 count + table hits + ISR fallthroughs
-        snprintf(buf, sizeof(buf), "c9:%lu t:%lu f:%lu",
-                 (unsigned long)dc->debugCmd9Count,
-                 (unsigned long)dc->debugTableHits,
-                 (unsigned long)dc->bus.debugIsrFallthrough);
-        getRenderer()->drawText(0, 4, std::string(buf));
-
-        // Line 5: DC always uses ZL (raw passthrough, forced in main loop)
-        snprintf(buf, sizeof(buf), "ZL Mode (forced)");
         getRenderer()->drawText(0, 5, std::string(buf));
 
         return;

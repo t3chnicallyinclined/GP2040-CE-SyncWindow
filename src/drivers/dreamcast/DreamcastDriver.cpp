@@ -64,6 +64,28 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
                 drv->debugTxCount++;
                 drv->debugTableHits++;
                 drv->debugConsecutivePolls++;
+
+                // Frame interval tracking
+                uint32_t rxTs = bus->rxArrivalTimestamp;
+                if (drv->prevCmd9Timestamp != 0) {
+                    uint32_t interval = rxTs - drv->prevCmd9Timestamp;
+                    drv->frameIntervalLast = interval;
+                    if (interval < drv->frameIntervalMin) drv->frameIntervalMin = interval;
+                    if (interval > drv->frameIntervalMax) drv->frameIntervalMax = interval;
+                    drv->frameCount++;
+                    if (interval > 20000) drv->droppedPollCount++;
+                }
+                drv->prevCmd9Timestamp = rxTs;
+
+                // Button-to-poll latency
+                if (drv->b2pPending) {
+                    uint32_t latency = rxTs - drv->buttonChangeTimestamp;
+                    drv->b2pLast = latency;
+                    if (latency < drv->b2pMin) drv->b2pMin = latency;
+                    if (latency > drv->b2pMax) drv->b2pMax = latency;
+                    drv->b2pCount++;
+                    drv->b2pPending = false;
+                }
             }
             break;
         }
@@ -99,9 +121,62 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
             break;
         }
 
-        case MAPLE_CMD_RESET_DEVICE:
-        case MAPLE_CMD_SHUTDOWN_DEVICE:
         case MAPLE_CMD_SET_CONDITION: {
+            // Vibrate command — ACK and track
+            bus->isrSendFifo(drv->ackPacketBuf, 3);
+            if (drv->enableDiagnostics) {
+                drv->debugRxCount++;
+                drv->debugTxCount++;
+
+                uint32_t rxTs = bus->rxArrivalTimestamp;
+                drv->cmd14Count++;
+
+                // Extract vibrate payload (word 3 of packet: funcCode=w1, data=w2,w3...)
+                // CMD14 payload: [header][funcCode][condition data]
+                // For vibrate: condition data has motor values
+                uint16_t payload = 0;
+                if (bus->isrWordsReceived >= 3) {
+                    // Word 2 (rxDmaBuf[2]) contains vibrate data
+                    // Motor values are in the upper bytes (wire order)
+                    uint32_t condWord = bus->rxDmaBuf[2];
+                    payload = (uint16_t)(condWord >> 16);  // motor0 << 8 | motor1
+                }
+                drv->cmd14LastPayload = payload;
+
+                // Interval from previous CMD14
+                uint32_t interval = 0;
+                if (drv->cmd14LastTimestamp != 0) {
+                    interval = rxTs - drv->cmd14LastTimestamp;
+                    drv->cmd14IntervalLast = interval;
+                }
+                drv->cmd14PrevTimestamp = drv->cmd14LastTimestamp;
+                drv->cmd14LastTimestamp = rxTs;
+
+                // Burst detection: CMD14s within 100ms of each other
+                if (interval > 0 && interval < 100000) {
+                    drv->cmd14BurstCount++;
+                } else {
+                    // New burst — save previous burst length if it was the longest
+                    if (drv->cmd14BurstCount > drv->cmd14LongestBurst) {
+                        drv->cmd14LongestBurst = drv->cmd14BurstCount;
+                    }
+                    drv->cmd14BurstCount = 1;
+                    drv->cmd14BurstStart = rxTs;
+                }
+
+                // Log entry for vibrate fingerprinting
+                uint8_t idx = drv->cmd14LogIdx;
+                drv->cmd14Log[idx].timestamp = rxTs;
+                drv->cmd14Log[idx].payload = payload;
+                drv->cmd14Log[idx].intervalUs = (interval > 0xFFFF) ? 0xFFFF : (uint16_t)interval;
+                drv->cmd14LogIdx = (idx + 1) % DreamcastDriver::CMD14_LOG_SIZE;
+                if (drv->cmd14LogCount < DreamcastDriver::CMD14_LOG_SIZE) drv->cmd14LogCount++;
+            }
+            break;
+        }
+
+        case MAPLE_CMD_RESET_DEVICE:
+        case MAPLE_CMD_SHUTDOWN_DEVICE: {
             // ackPacketBuf pre-built with correct port+CRC
             bus->isrSendFifo(drv->ackPacketBuf, 3);
             if (drv->enableDiagnostics) {
@@ -335,6 +410,12 @@ void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromGpio)(uint32_t
     }
     cmd9ReadyW3 = cmd9TableW3[index];
     cmd9ReadyW5 = cmd9TableW5[index];
+
+    // Timestamp for button-to-poll latency measurement
+    if (enableDiagnostics) {
+        buttonChangeTimestamp = time_us_32();
+        b2pPending = true;
+    }
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::updateAnalogFromGamepad)(Gamepad* gamepad) {
