@@ -5,36 +5,46 @@
 #include "pico/time.h"
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
+#include "uart_rx.pio.h"
 
-static DreamcastDriver* irqDriverInstance = nullptr;
+// Driver instances indexed by PIO1 RX SM number (matches irqBusInstances in maple_bus.cpp).
+static DreamcastDriver* irqDriverInstances[4] = {};
 
 // ============================================================
 // ISR Command Dispatch — handles ALL Maple Bus commands from ISR
 // ============================================================
 
 void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus* bus) {
-    DreamcastDriver* drv = irqDriverInstance;
+    DreamcastDriver* drv = irqDriverInstances[bus->getRxSm()];
     if (!drv) return;
+
+    const bool isP2 = (drv->p2Enabled && bus == &drv->busP2);
 
     uint32_t hdr = bus->rxDmaBuf[0];
     int8_t cmd = maple_hdr_command(hdr);
     uint8_t destAddr = maple_hdr_dest(hdr) & MAPLE_PERIPH_MASK;
     uint8_t port = maple_hdr_origin(hdr) & MAPLE_PORT_MASK;
 
-    // Route VMU sub-peripheral commands
-    if (!drv->disableVMU && destAddr == MAPLE_SUB0_ADDR) {
-        if (!drv->vmuReady) return;  // No response — DC will retry
+    // Route VMU sub-peripheral commands (P1 only)
+    if (!isP2 && !drv->disableVMU && destAddr == MAPLE_SUB0_ADDR) {
+        if (!drv->vmuReady) return;
         drv->isrHandleVmuCommand(cmd, hdr, port, bus);
         return;
     }
 
-    // Only handle controller-addressed packets
     if (destAddr != MAPLE_CTRL_ADDR) return;
 
-    // Compute origin/dest with sub-peripheral bits for response header
-    uint8_t subPeriphBits = drv->disableVMU ? 0 : MAPLE_SUB0_ADDR;
+    // P2 has no VMU sub-peripheral
+    uint8_t subPeriphBits = (!isP2 && !drv->disableVMU) ? MAPLE_SUB0_ADDR : 0;
     uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | subPeriphBits | port;
     uint8_t dest = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
+
+    // Select the right buffers for P1 or P2
+    uint32_t* ctrlBuf = isP2 ? drv->p2ControllerPacketBuf : drv->controllerPacketBuf;
+    uint32_t* infoBuf = isP2 ? drv->p2InfoPacketBuf : drv->infoPacketBuf;
+    uint32_t* extBuf  = isP2 ? drv->p2ExtInfoBuf : drv->extInfoBuf;
+    uint32_t* ackBuf  = isP2 ? drv->p2AckPacketBuf : drv->ackPacketBuf;
+    uint32_t* unkBuf  = isP2 ? drv->p2UnknownCmdBuf : drv->unknownCmdBuf;
 
     switch (cmd) {
         case MAPLE_CMD_GET_CONDITION: {
@@ -42,22 +52,24 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
             // If port is known and matches cached, use pre-computed W5 (CRC).
             // Otherwise compute CRC inline (~5 cycles).
             uint32_t w1 = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
-            uint32_t w3 = drv->cmd9ReadyW3;
+            uint32_t w3 = isP2 ? drv->p2Cmd9ReadyW3 : drv->cmd9ReadyW3;
 
-            drv->controllerPacketBuf[1] = w1;
-            drv->controllerPacketBuf[3] = w3;
+            ctrlBuf[1] = w1;
+            ctrlBuf[3] = w3;
 
-            if (drv->portKnown && port == drv->cachedPort) {
-                // Use pre-computed CRC from lookup table
-                drv->controllerPacketBuf[5] = drv->cmd9ReadyW5;
-            } else {
-                // Compute CRC inline — port changed or not yet cached
-                uint32_t xorAll = w1 ^ drv->controllerPacketBuf[2] ^ w3 ^ drv->controllerPacketBuf[4];
-                uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
-                drv->controllerPacketBuf[5] = (uint32_t)crc << 24;
+            {
+                bool pk = isP2 ? drv->p2PortKnown : drv->portKnown;
+                uint8_t cp = isP2 ? drv->p2CachedPort : drv->cachedPort;
+                if (pk && port == cp) {
+                    ctrlBuf[5] = isP2 ? drv->p2Cmd9ReadyW5 : drv->cmd9ReadyW5;
+                } else {
+                    uint32_t xorAll = w1 ^ ctrlBuf[2] ^ w3 ^ ctrlBuf[4];
+                    uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+                    ctrlBuf[5] = (uint32_t)crc << 24;
+                }
             }
 
-            bus->isrSendFifo(drv->controllerPacketBuf, 6);
+            bus->isrSendFifo(ctrlBuf, 6);
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugCmd9Count++;
@@ -91,15 +103,21 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
         }
 
         case MAPLE_CMD_DEVICE_REQUEST: {
-            // Cache port on first CMD1 — used to pre-compute all packet CRCs
-            if (!drv->portKnown || port != drv->cachedPort) {
-                drv->cachedPort = port;
-                drv->portKnown = true;
-                drv->rebuildAllPacketsForPort(port);
+            if (isP2) {
+                if (!drv->p2PortKnown || port != drv->p2CachedPort) {
+                    drv->p2CachedPort = port;
+                    drv->p2PortKnown = true;
+                    drv->rebuildAllPacketsForPortP2(port);
+                }
+            } else {
+                if (!drv->portKnown || port != drv->cachedPort) {
+                    drv->cachedPort = port;
+                    drv->portKnown = true;
+                    drv->rebuildAllPacketsForPort(port);
+                }
             }
-            // infoPacketBuf is pre-built with correct port+CRC
-            bus->isrSendDma(drv->infoPacketBuf, 31);
-            drv->vmuReady = true;
+            bus->isrSendDma(infoBuf, 31);
+            if (!isP2) drv->vmuReady = true;
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugCmd1Count++;
@@ -112,8 +130,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
         }
 
         case MAPLE_CMD_ALL_STATUS_REQUEST: {
-            // extInfoBuf pre-built with correct port+CRC
-            bus->isrSendDma(drv->extInfoBuf, 51);
+            bus->isrSendDma(extBuf, 51);
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugTxCount++;
@@ -122,8 +139,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
         }
 
         case MAPLE_CMD_SET_CONDITION: {
-            // Vibrate command — ACK and track
-            bus->isrSendFifo(drv->ackPacketBuf, 3);
+            bus->isrSendFifo(ackBuf, 3);
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugTxCount++;
@@ -177,8 +193,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
 
         case MAPLE_CMD_RESET_DEVICE:
         case MAPLE_CMD_SHUTDOWN_DEVICE: {
-            // ackPacketBuf pre-built with correct port+CRC
-            bus->isrSendFifo(drv->ackPacketBuf, 3);
+            bus->isrSendFifo(ackBuf, 3);
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugTxCount++;
@@ -187,8 +202,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
         }
 
         default: {
-            // unknownCmdBuf pre-built with correct port+CRC
-            bus->isrSendFifo(drv->unknownCmdBuf, 3);
+            bus->isrSendFifo(unkBuf, 3);
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugTxCount++;
@@ -262,11 +276,31 @@ bool DreamcastDriver::init(uint pin_a, uint pin_b) {
     buildCmd9LookupTable();
 
     // Always enable ISR dispatch — handles ALL commands from ISR.
-    // No STD/ZL mode distinction for DC.
-    irqDriverInstance = this;
+    irqDriverInstances[bus.getRxSm()] = this;
     bus.enableIsrDispatch(isrCommandDispatch);
 
     connected = true;
+    return true;
+}
+
+bool DreamcastDriver::initP2(uint pin_a, uint pin_b) {
+    if (!busP2.init(pin_a, pin_b)) return false;
+
+    buildInfoPacketP2();
+    buildExtInfoPacketP2();
+    buildControllerPacketP2();
+    buildACKPacketP2();
+    buildResendPacketP2();
+    buildUnknownCmdPacketP2();
+
+    // Set analog sticks to center
+    p2ControllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
+                              | ((uint32_t)0x80 << 8) | 0x80;
+
+    irqDriverInstances[busP2.getRxSm()] = this;
+    busP2.enableIsrDispatch(isrCommandDispatch);
+
+    p2Enabled = true;
     return true;
 }
 
@@ -382,6 +416,9 @@ void DreamcastDriver::rebuildCmd9LookupTableForPort() {
     uint32_t w2 = controllerPacketBuf[2];  // funcCode — constant
     uint32_t w4 = controllerPacketBuf[4];  // analog — current value
 
+    // Cache XOR constant for network input CRC computation
+    cachedCrcXorConst = w1 ^ w2 ^ w4;
+
     for (uint32_t i = 0; i < cmd9TableSize; i++) {
         uint32_t w3 = cmd9TableW3[i];
         uint32_t xorAll = w1 ^ w2 ^ w3 ^ w4;
@@ -425,6 +462,86 @@ void __no_inline_not_in_flash_func(DreamcastDriver::updateAnalogFromGamepad)(Gam
     uint8_t jy = (uint8_t)(ly32 > 0xFFFF ? 0xFF : (ly32 >> 8));
     controllerPacketBuf[4] = ((uint32_t)0x80 << 24) | ((uint32_t)0x80 << 16)
                            | ((uint32_t)jy << 8) | jx;
+}
+
+// ============================================================
+// Network input via PIO UART RX
+// ============================================================
+
+void DreamcastDriver::initUartRx(uint pin, uint baud) {
+    uartRxPio = pio1;
+    // Force uart_rx at offset 28 (maple_rx occupies 0-27)
+    uartRxSmOffset = 28;
+    pio_add_program_at_offset(uartRxPio, &uart_rx_program, uartRxSmOffset);
+    uartRxSm = pio_claim_unused_sm(uartRxPio, true);
+    uart_rx_program_init(uartRxPio, uartRxSm, uartRxSmOffset, pin, baud);
+    uartFramePos = 0;
+    uartRxInitialized = true;
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::pollUartRx)() {
+    if (!uartRxInitialized) return;
+
+    // Parse any new UART bytes from PIO FIFO
+    while (!pio_sm_is_rx_fifo_empty(uartRxPio, uartRxSm)) {
+        uint8_t byte = (uint8_t)(pio_sm_get(uartRxPio, uartRxSm) >> 24);
+        if (uartFramePos == 0) {
+            if (byte == 0xAA) {
+                uartFramePos = 1;
+            } else if (enableDiagnostics) {
+                netBadSync++;
+            }
+            continue;
+        }
+        uartFrameBuf[uartFramePos - 1] = byte;
+        uartFramePos++;
+        if (uartFramePos == 5) {
+            uint32_t w3 = ((uint32_t)uartFrameBuf[0] << 24) |
+                          ((uint32_t)uartFrameBuf[1] << 16) |
+                          ((uint32_t)uartFrameBuf[2] << 8)  |
+                          (uint32_t)uartFrameBuf[3];
+            lastNetW3 = w3;
+            uint32_t now = timer_hw->timerawl;
+
+            if (enableDiagnostics) {
+                netFrameCount++;
+                if (netFrameArrivalPrev != 0) {
+                    uint32_t interval = now - netFrameArrivalPrev;
+                    netIntervalLast = interval;
+                    if (interval < netIntervalMin) netIntervalMin = interval;
+                    if (interval > netIntervalMax) netIntervalMax = interval;
+                }
+                netFrameArrivalPrev = now;
+            }
+
+            lastNetTimestamp = now;
+            hasNetState = true;
+            uartFramePos = 0;
+        }
+    }
+
+    // Re-apply latched network state every loop (like a held GPIO pin).
+    // Timeout after 100ms of no UART frames = sender disconnected.
+    if (hasNetState) {
+        if (timer_hw->timerawl - lastNetTimestamp > 100000) {
+            hasNetState = false;
+        } else {
+            updateCmd9FromNetwork(lastNetW3);
+        }
+    }
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromNetwork)(uint32_t w3) {
+    p2Cmd9ReadyW3 = w3;
+    if (enableDiagnostics) {
+        netApplyCount++;
+        netLastW3 = w3;
+    }
+    if (p2PortKnown) {
+        uint32_t xorAll = p2CachedCrcXorConst ^ w3;
+        uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+        p2Cmd9ReadyW5 = (uint32_t)crc << 24;
+    }
 }
 
 uint16_t __no_inline_not_in_flash_func(DreamcastDriver::mapRawGpioToDC)(
@@ -576,6 +693,75 @@ void DreamcastDriver::buildUnknownCmdPacket() {
 }
 
 // ============================================================
+// P2 Packet Builders — same format, targets p2 buffers, no VMU
+// ============================================================
+
+void DreamcastDriver::buildInfoPacketP2() {
+    memset(p2InfoPacketBuf, 0, sizeof(p2InfoPacketBuf));
+    // Copy P1 info packet as template (same device info)
+    memcpy(p2InfoPacketBuf, infoPacketBuf, sizeof(p2InfoPacketBuf));
+}
+
+void DreamcastDriver::buildExtInfoPacketP2() {
+    memset(p2ExtInfoBuf, 0, sizeof(p2ExtInfoBuf));
+    memcpy(p2ExtInfoBuf, extInfoBuf, sizeof(p2ExtInfoBuf));
+}
+
+void DreamcastDriver::buildControllerPacketP2() {
+    memset(p2ControllerPacketBuf, 0, sizeof(p2ControllerPacketBuf));
+    memcpy(p2ControllerPacketBuf, controllerPacketBuf, sizeof(p2ControllerPacketBuf));
+}
+
+void DreamcastDriver::buildACKPacketP2() {
+    memset(p2AckPacketBuf, 0, sizeof(p2AckPacketBuf));
+    memcpy(p2AckPacketBuf, ackPacketBuf, sizeof(p2AckPacketBuf));
+}
+
+void DreamcastDriver::buildResendPacketP2() {
+    memset(p2ResendPacketBuf, 0, sizeof(p2ResendPacketBuf));
+    memcpy(p2ResendPacketBuf, resendPacketBuf, sizeof(p2ResendPacketBuf));
+}
+
+void DreamcastDriver::buildUnknownCmdPacketP2() {
+    memset(p2UnknownCmdBuf, 0, sizeof(p2UnknownCmdBuf));
+    memcpy(p2UnknownCmdBuf, unknownCmdBuf, sizeof(p2UnknownCmdBuf));
+}
+
+void DreamcastDriver::rebuildAllPacketsForPortP2(uint8_t port) {
+    // P2 has no VMU — no sub-peripheral bits
+    uint8_t origin = (MAPLE_CTRL_ADDR & MAPLE_PERIPH_MASK) | port;
+    uint8_t dest   = (MAPLE_DC_ADDR & MAPLE_PERIPH_MASK) | port;
+
+    p2InfoPacketBuf[1] = maple_make_header(28, origin, dest, MAPLE_CMD_RESPOND_DEVICE_STATUS);
+    p2InfoPacketBuf[30] = MapleBus::calcCRC(&p2InfoPacketBuf[1], 29);
+
+    p2ExtInfoBuf[1] = maple_make_header(48, origin, dest, MAPLE_CMD_RESPOND_ALL_STATUS);
+    p2ExtInfoBuf[50] = MapleBus::calcCRC(&p2ExtInfoBuf[1], 49);
+
+    p2AckPacketBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_ACK);
+    p2AckPacketBuf[2] = MapleBus::calcCRC(&p2AckPacketBuf[1], 1);
+
+    p2ResendPacketBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_SEND_AGAIN);
+    p2ResendPacketBuf[2] = MapleBus::calcCRC(&p2ResendPacketBuf[1], 1);
+
+    p2UnknownCmdBuf[1] = maple_make_header(0, origin, dest, MAPLE_CMD_RESPOND_UNKNOWN_CMD);
+    p2UnknownCmdBuf[2] = MapleBus::calcCRC(&p2UnknownCmdBuf[1], 1);
+
+    p2ControllerPacketBuf[1] = maple_make_header(3, origin, dest, MAPLE_CMD_RESPOND_DATA_XFER);
+
+    // Cache CRC constant for network input
+    uint32_t w1 = p2ControllerPacketBuf[1];
+    uint32_t w2 = p2ControllerPacketBuf[2];
+    uint32_t w4 = p2ControllerPacketBuf[4];
+    p2CachedCrcXorConst = w1 ^ w2 ^ w4;
+
+    // Compute initial W5 CRC for current W3 (all buttons released)
+    uint32_t xorAll = p2CachedCrcXorConst ^ p2Cmd9ReadyW3;
+    uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+    p2Cmd9ReadyW5 = (uint32_t)crc << 24;
+}
+
+// ============================================================
 // Rebuild all static packets after CMD1 reveals the real port
 // ============================================================
 
@@ -617,6 +803,25 @@ void DreamcastDriver::rebuildAllPacketsForPort(uint8_t port) {
 // ============================================================
 
 void DreamcastDriver::processAux() {
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::processP2)(Gamepad* gamepad) {
+    if (!p2Enabled) return;
+
+    // P2 ISR TX cleanup — same as P1 process() but for busP2, no VMU
+    if (busP2.isrTxFired) {
+        busP2.isrTxFired = false;
+        busP2.finishIsrTx();
+        return;
+    }
+
+    if (busP2.isrNvicDisabled) {
+        // CRC fail on P2 — just restart RX
+        const uint8_t* packet = nullptr;
+        uint rxLen = 0;
+        busP2.pollReceive(&packet, &rxLen);
+        return;
+    }
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::waitTxFlushRx)() {

@@ -241,7 +241,11 @@ void DisplayAddon::process() {
                     if (!dc->enableDiagnostics) dcDrawDone = false;  // force redraw of status bar
                     s1Toggled = true;
                 }
-            } else if (!s1Held) {
+            } else if (!s1Held && s1HoldStart != 0) {
+                // S1 released — short press (<3s) cycles diag pages when diagnostics on
+                if (!s1Toggled && dc->enableDiagnostics) {
+                    dc->diagPage = (dc->diagPage + 1) % 3;
+                }
                 s1HoldStart = 0;
             }
 

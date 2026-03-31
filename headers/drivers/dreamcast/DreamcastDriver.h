@@ -4,6 +4,7 @@
 #include "drivers/dreamcast/maple_bus.h"
 #include "drivers/dreamcast/DreamcastVMU.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
 
 class Gamepad;
 
@@ -113,6 +114,32 @@ public:
     void updateCmd9FromGpio(uint32_t filteredGpio);
     void updateAnalogFromGamepad(Gamepad* gamepad);
 
+    // Network input via PIO UART RX (GPIO 23, 1 Mbps)
+    void initUartRx(uint pin, uint baud);
+    void pollUartRx();
+    void updateCmd9FromNetwork(uint32_t w3);
+    PIO      uartRxPio = nullptr;
+    uint     uartRxSm = 0;
+    uint     uartRxSmOffset = 0;
+    uint32_t cachedCrcXorConst = 0;
+    bool     uartRxInitialized = false;
+    uint8_t  uartFramePos = 0;      // 0=waiting for sync, 1-4=data bytes
+    uint8_t  uartFrameBuf[4];       // W3 accumulator
+    uint32_t lastNetW3 = 0;         // Latched network state (persists like held GPIO)
+    uint32_t lastNetTimestamp = 0;   // When last UART frame arrived (us)
+    bool     hasNetState = false;    // True when network state is active
+
+    // Network diagnostics
+    uint32_t netFrameCount = 0;      // Total UART frames received
+    uint32_t netBadSync = 0;         // Bytes discarded before 0xAA sync
+    uint32_t netApplyCount = 0;      // Times updateCmd9FromNetwork called
+    uint32_t netLastW3 = 0xFFFFFFFF; // Last W3 sent to cmd9Ready (for display)
+    uint32_t netFrameArrivalPrev = 0; // Previous frame arrival time
+    uint32_t netIntervalMin = 0xFFFFFFFF;
+    uint32_t netIntervalMax = 0;
+    uint32_t netIntervalLast = 0;
+    uint8_t  diagPage = 0;           // 0=maple, 1=network, 2=state
+
     // Cached port from CMD1 — never changes after initial handshake.
     // Used to pre-compute all packet headers and CRCs.
     uint8_t cachedPort = 0;
@@ -133,6 +160,7 @@ public:
 
     // Rebuild all static packet headers+CRCs after port is known from CMD1.
     void rebuildAllPacketsForPort(uint8_t port);
+    void rebuildAllPacketsForPortP2(uint8_t port);
 
     // ISR command dispatch — handles ALL Maple Bus commands from ISR context.
     // Registered via bus.enableIsrDispatch() at init.
@@ -140,6 +168,24 @@ public:
 
     // ISR VMU sub-dispatch
     void isrHandleVmuCommand(int8_t cmd, uint32_t hdr, uint8_t port, MapleBus* bus);
+
+    // P2: second Maple Bus for remote player (network-driven)
+    MapleBus busP2;
+    bool p2Enabled = false;
+    bool p2PortKnown = false;
+    uint8_t p2CachedPort = 0;
+    volatile uint32_t p2Cmd9ReadyW3 = 0x0000FFFF;
+    volatile uint32_t p2Cmd9ReadyW5 = 0;
+    uint32_t p2CachedCrcXorConst = 0;
+    uint32_t p2ControllerPacketBuf[6];
+    uint32_t p2InfoPacketBuf[31];
+    uint32_t p2ExtInfoBuf[51];
+    uint32_t p2AckPacketBuf[3];
+    uint32_t p2ResendPacketBuf[3];
+    uint32_t p2UnknownCmdBuf[3];
+
+    bool initP2(uint pin_a, uint pin_b);
+    void processP2(Gamepad* gamepad);
 
 private:
     bool connected;
@@ -150,6 +196,12 @@ private:
     void buildACKPacket();
     void buildResendPacket();
     void buildUnknownCmdPacket();
+    void buildInfoPacketP2();
+    void buildExtInfoPacketP2();
+    void buildControllerPacketP2();
+    void buildACKPacketP2();
+    void buildResendPacketP2();
+    void buildUnknownCmdPacketP2();
 
     void waitTxFlushRx();
     uint16_t mapButtonsToDC(uint32_t gpButtons, uint8_t dpad);

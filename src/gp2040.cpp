@@ -358,6 +358,13 @@ void GP2040::run() {
 
 	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
 	bool dcMode = (dcDriver != nullptr);
+
+	// P2: second Maple Bus inside dcDriver (GPIO 23/24), UART RX on GPIO 28
+	if (dcMode) {
+		dcDriver->initUartRx(28, 1000000);
+		dcDriver->initP2(23, 24);
+	}
+
 	bool configMode = false;
 	GPDriver * inputDriver = nullptr;
 
@@ -416,6 +423,7 @@ void GP2040::run() {
 
 		if (dcMode) {
 			dcDriver->process(gamepad);
+			dcDriver->processP2(gamepad);
 		} else {
 			bool processed = inputDriver->process(gamepad);
 			tud_task();
@@ -427,8 +435,12 @@ void GP2040::run() {
 		// DC mode: ISR handles all commands. Main loop just keeps
 		// lookup table + analog current and does ISR TX cleanup.
 		if (dcMode) {
+			// P1: physical buttons via lookup table
 			dcDriver->updateCmd9FromGpio(gamepad->debouncedGpio);
 			dcDriver->updateAnalogFromGamepad(gamepad);
+
+			// P2: network buttons from UART
+			dcDriver->pollUartRx();
 		}
 	}
 }

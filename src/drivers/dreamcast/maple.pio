@@ -93,7 +93,7 @@ static inline void maple_tx_program_init(PIO pio, uint sm, uint offset, uint pin
 ;
 ; Each FIFO word = 32 decoded data bits = 4 bytes of Maple payload.
 ; Use DMA bswap to convert from network (MSByte-first) to host (LE) order.
-; 29 instructions (fits in 32-slot PIO instruction memory).
+; 28 instructions (leaves 4 slots for uart_rx on PIO1).
 
 .program maple_rx
 
@@ -119,10 +119,6 @@ set x, 4 ; we need exactly 4 B toggles
 jmp x!=y wait_start ; wrong count → not a valid sync sequence
 
 data_start:
-; Start notification removed (was: irq set 0 rel)
-; We only use the end-of-packet IRQ for polling-based consumption.
-nop
-
 ; Wait for A to go low — first clock transition of data phase
 wait 0 pin 0
 

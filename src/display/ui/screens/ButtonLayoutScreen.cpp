@@ -5,6 +5,7 @@
 #include "drivers/xbone/XBOneDriver.h"
 #include "drivers/xinput/XInputDriver.h"
 #include "drivers/dreamcast/DreamcastDriver.h"
+#include "hardware/timer.h"
 
 void ButtonLayoutScreen::init() {
     isInputHistoryEnabled = Storage::getInstance().getDisplayOptions().inputHistoryEnabled;
@@ -287,62 +288,127 @@ void ButtonLayoutScreen::generateHeader() {
 
 void ButtonLayoutScreen::drawScreen() {
     DreamcastDriver* dcDriver = DriverManager::getInstance().getDCDriver();
+    DreamcastDriver* dcDriverP2 = DriverManager::getInstance().getDCDriverP2();
 
     if (inputMode == INPUT_MODE_DREAMCAST && dcDriver && dcDriver->enableDiagnostics) {
         auto* dc = dcDriver;
         char buf[64];
 
-        // Clear widget remnants before drawing diagnostics
         getRenderer()->clearScreen();
 
-        // Line 0: Frame interval + jitter + dropped polls
-        {
-            uint32_t fMin = (dc->frameIntervalMin == 0xFFFFFFFF) ? 0 : dc->frameIntervalMin;
-            uint32_t fMax = dc->frameIntervalMax;
-            snprintf(buf, sizeof(buf), "F:%lu-%luus D:%lu",
-                     (unsigned long)fMin, (unsigned long)fMax,
-                     (unsigned long)dc->droppedPollCount);
+        if (dc->diagPage == 0) {
+            // PAGE 0: MAPLE BUS
+            snprintf(buf, sizeof(buf), "=MAPLE= S1:page");
+            getRenderer()->drawText(0, 0, std::string(buf));
+
+            {
+                uint32_t fMin = (dc->frameIntervalMin == 0xFFFFFFFF) ? 0 : dc->frameIntervalMin;
+                snprintf(buf, sizeof(buf), "F:%lu-%luus D:%lu",
+                         (unsigned long)fMin, (unsigned long)dc->frameIntervalMax,
+                         (unsigned long)dc->droppedPollCount);
+            }
+            getRenderer()->drawText(0, 1, std::string(buf));
+
+            {
+                uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
+                uint32_t bMin = (dc->b2pMin == 0xFFFFFFFF) ? 0 : dc->b2pMin;
+                snprintf(buf, sizeof(buf), "ISR:%luus B2P:%lu-%lu",
+                         (unsigned long)rMin,
+                         (unsigned long)bMin, (unsigned long)dc->b2pMax);
+            }
+            getRenderer()->drawText(0, 2, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "c9:%lu XF:%lu Rx:%lu",
+                     (unsigned long)dc->debugCmd9Count,
+                     (unsigned long)dc->debugXorFail,
+                     (unsigned long)dc->debugRxCount);
+            getRenderer()->drawText(0, 3, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "v14:%lu burst:%lu",
+                     (unsigned long)dc->cmd14Count,
+                     (unsigned long)dc->cmd14BurstCount);
+            getRenderer()->drawText(0, 4, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu",
+                     (unsigned long)dc->vmu.debugVmuReadOkCount,
+                     (unsigned long)dc->vmu.debugVmuReadErrCount);
+            getRenderer()->drawText(0, 5, std::string(buf));
+
+        } else if (dc->diagPage == 1) {
+            // PAGE 1: P2 NETWORK INPUT
+            auto* p2 = dcDriverP2;
+            snprintf(buf, sizeof(buf), "=P2 NET= S1:page");
+            getRenderer()->drawText(0, 0, std::string(buf));
+
+            if (!p2) {
+                snprintf(buf, sizeof(buf), "P2 not initialized");
+                getRenderer()->drawText(0, 2, std::string(buf));
+            } else {
+                snprintf(buf, sizeof(buf), "rx:%lu app:%lu",
+                         (unsigned long)p2->netFrameCount,
+                         (unsigned long)p2->netApplyCount);
+                getRenderer()->drawText(0, 1, std::string(buf));
+
+                {
+                    uint32_t iMin = (p2->netIntervalMin == 0xFFFFFFFF) ? 0 : p2->netIntervalMin;
+                    snprintf(buf, sizeof(buf), "int:%lu-%luus",
+                             (unsigned long)iMin,
+                             (unsigned long)p2->netIntervalMax);
+                }
+                getRenderer()->drawText(0, 2, std::string(buf));
+
+                snprintf(buf, sizeof(buf), "last:%luus",
+                         (unsigned long)p2->netIntervalLast);
+                getRenderer()->drawText(0, 3, std::string(buf));
+
+                snprintf(buf, sizeof(buf), "bad:%lu latch:%s",
+                         (unsigned long)p2->netBadSync,
+                         p2->hasNetState ? "ON" : "off");
+                getRenderer()->drawText(0, 4, std::string(buf));
+
+                snprintf(buf, sizeof(buf), "uart:%s port:%s",
+                         p2->uartRxInitialized ? "OK" : "NO",
+                         p2->portKnown ? "OK" : "NO");
+                getRenderer()->drawText(0, 5, std::string(buf));
+            }
+
+        } else {
+            // PAGE 2: LIVE STATE — P1 + P2 side by side
+            auto* p2 = dcDriverP2;
+            snprintf(buf, sizeof(buf), "=STATE= S1:page");
+            getRenderer()->drawText(0, 0, std::string(buf));
+
+            // P1 cmd9ReadyW3 (physical buttons)
+            snprintf(buf, sizeof(buf), "P1:%08lX",
+                     (unsigned long)dc->cmd9ReadyW3);
+            getRenderer()->drawText(0, 1, std::string(buf));
+
+            // P1 GPIO state
+            snprintf(buf, sizeof(buf), "gpio:%08lX",
+                     (unsigned long)dc->lastFilteredGpio);
+            getRenderer()->drawText(0, 2, std::string(buf));
+
+            // P2 cmd9ReadyW3 (network buttons)
+            if (p2) {
+                snprintf(buf, sizeof(buf), "P2:%08lX",
+                         (unsigned long)p2->cmd9ReadyW3);
+                getRenderer()->drawText(0, 3, std::string(buf));
+
+                uint32_t age = p2->hasNetState ?
+                    (timer_hw->timerawl - p2->lastNetTimestamp) / 1000 : 9999;
+                snprintf(buf, sizeof(buf), "net:%08lX %lums",
+                         (unsigned long)p2->netLastW3,
+                         (unsigned long)age);
+                getRenderer()->drawText(0, 4, std::string(buf));
+            } else {
+                snprintf(buf, sizeof(buf), "P2: not init");
+                getRenderer()->drawText(0, 3, std::string(buf));
+            }
+
+            snprintf(buf, sizeof(buf), "mask:%08lX",
+                     (unsigned long)dc->buttonGpioMask);
+            getRenderer()->drawText(0, 5, std::string(buf));
         }
-        getRenderer()->drawText(0, 0, std::string(buf));
-
-        // Line 1: ISR response time + button-to-poll latency
-        {
-            uint32_t rMin = (dc->respMin == 0xFFFFFFFF) ? 0 : dc->respMin;
-            uint32_t bMin = (dc->b2pMin == 0xFFFFFFFF) ? 0 : dc->b2pMin;
-            uint32_t bMax = dc->b2pMax;
-            snprintf(buf, sizeof(buf), "ISR:%luus B2P:%lu-%luus",
-                     (unsigned long)rMin,
-                     (unsigned long)bMin, (unsigned long)bMax);
-        }
-        getRenderer()->drawText(0, 1, std::string(buf));
-
-        // Line 2: CMD14 vibrate tracking
-        snprintf(buf, sizeof(buf), "v14:%lu p:%04X i:%lu",
-                 (unsigned long)dc->cmd14Count,
-                 (unsigned int)dc->cmd14LastPayload,
-                 (unsigned long)(dc->cmd14IntervalLast / 1000));  // interval in ms
-        getRenderer()->drawText(0, 2, std::string(buf));
-
-        // Line 3: Vibrate burst info
-        snprintf(buf, sizeof(buf), "burst:%lu max:%lu log:%u",
-                 (unsigned long)dc->cmd14BurstCount,
-                 (unsigned long)dc->cmd14LongestBurst,
-                 (unsigned)dc->cmd14LogCount);
-        getRenderer()->drawText(0, 3, std::string(buf));
-
-        // Line 4: cmd9 count + XF + counters
-        snprintf(buf, sizeof(buf), "c9:%lu XF:%lu Rx:%lu",
-                 (unsigned long)dc->debugCmd9Count,
-                 (unsigned long)dc->debugXorFail,
-                 (unsigned long)dc->debugRxCount);
-        getRenderer()->drawText(0, 4, std::string(buf));
-
-        // Line 5: VMU stats
-        snprintf(buf, sizeof(buf), "VMU ok:%lu er:%lu fw:%lu",
-                 (unsigned long)dc->vmu.debugVmuReadOkCount,
-                 (unsigned long)dc->vmu.debugVmuReadErrCount,
-                 (unsigned long)dc->vmu.debugVmuFlashCount);
-        getRenderer()->drawText(0, 5, std::string(buf));
 
         return;
     }
