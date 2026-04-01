@@ -11,6 +11,16 @@
 
 #define BOARD_CONFIG_LABEL "Waveshare Zero"
 
+// Dreamcast mode: stock debounce 0, no NOBD sync window.
+// The 16ms Maple Bus polling interval acts as a natural sync window.
+#define DEFAULT_DEBOUNCE_DELAY 0
+#define DEFAULT_NOBD_SYNC_DELAY 0
+
+// Dreamcast Maple Bus pins — GPIO 24/25 are free on RP2040-Zero
+// (GPIO 23 is SMPS mode pin on this board — avoid for bus driving)
+#define DEFAULT_DREAMCAST_PIN_A 24
+#define DEFAULT_DREAMCAST_PIN_B 25
+
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define GPIO_PIN_02 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |

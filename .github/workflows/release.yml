@@ -54,6 +54,8 @@ jobs:
             cmake_extra: ""
           - board: PicoW
             cmake_extra: "-DPICO_BOARD=pico_w"
+          - board: WaveshareZero
+            cmake_extra: ""
           # Pico2 (RP2350) removed — untested on RP2350 hardware
 
     steps:
