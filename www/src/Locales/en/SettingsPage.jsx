@@ -199,6 +199,12 @@ export default {
 	'dreamcast-pins-board-picow': 'Pico W: GPIO 14 & 15 (avoid 23/24 — wireless chip/VBUS)',
 	'dreamcast-pins-board-pico2': 'Pico 2: GPIO 26 & 27 (avoid 23/24 — SMPS/VBUS, will freeze)',
 	'dreamcast-pins-warning': 'Never use GPIO 23, 24, or 29 on Pico-family boards — these are tied to internal power/ADC circuitry and will cause freezes or erratic behavior.',
+	'dreamcast-p2-section-title': 'Player 2 Network Port (Online Play)',
+	'dreamcast-p2-section-desc': 'Configure a second Maple Bus port for remote player input over UART. Set all to 255 to disable. Pins A and B must be consecutive (B = A + 1). UART RX receives button data from a WiFi bridge.',
+	'dreamcast-p2-pin-a-label': 'P2 Maple Bus Pin A',
+	'dreamcast-p2-pin-b-label': 'P2 Maple Bus Pin B',
+	'dreamcast-uart-rx-label': 'UART RX Pin (network input)',
+	'dreamcast-p2-enabled-note': 'P2 online port enabled. Connect second DC cable to these pins + a WiFi UART bridge to the RX pin.',
 	// DC sync mode labels removed — always raw passthrough (matches real DC hardware)
 	'vmu-manager-label': 'VMU Manager',
 	'vmu-manager-description': 'Download or upload VMU save data, or format the VMU.',

@@ -20,6 +20,12 @@
 #define DEFAULT_DREAMCAST_PIN_A 2
 #define DEFAULT_DREAMCAST_PIN_B 3
 
+// P2 network port for online play — GPIO 23/24 (proven Maple Bus pins)
+#define DEFAULT_DREAMCAST_P2_PIN_A 23
+#define DEFAULT_DREAMCAST_P2_PIN_B 24
+// UART RX for WiFi bridge input — GPIO 26 (works for passive PIO input)
+#define DEFAULT_DREAMCAST_UART_RX_PIN 26
+
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define GPIO_PIN_19 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |

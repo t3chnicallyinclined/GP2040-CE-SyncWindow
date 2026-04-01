@@ -461,6 +461,9 @@ const schema = yup.object().shape({
 	nobdReleaseDebounce: yup.number().label('NOBD Release Debounce'),
 	dreamcastPinA: yup.number().min(0).max(29).label('Dreamcast Pin A'),
 	dreamcastPinB: yup.number().min(0).max(29).label('Dreamcast Pin B'),
+	dreamcastP2PinA: yup.number().min(0).max(255).label('Dreamcast P2 Pin A'),
+	dreamcastP2PinB: yup.number().min(0).max(255).label('Dreamcast P2 Pin B'),
+	dreamcastUartRxPin: yup.number().min(0).max(255).label('Dreamcast UART RX Pin'),
 	// dcSyncMode: removed from UI — always Off (raw passthrough like real DC hardware)
 	// zeroLatencyMode: removed — ISR handles all DC commands, always on
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
@@ -1604,6 +1607,64 @@ export default function SettingsPage() {
 															</ul>
 															<span className="text-danger">{t('SettingsPage:dreamcast-pins-warning')}</span>
 														</div>
+														<hr className="my-3" />
+														<p className="mb-2"><strong>{t('SettingsPage:dreamcast-p2-section-title')}</strong></p>
+														<p className="text-muted mb-2" style={{fontSize: '0.85em'}}>
+															{t('SettingsPage:dreamcast-p2-section-desc')}
+														</p>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-p2-pin-a-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastP2PinA"
+																	className="form-control-sm"
+																	value={values.dreamcastP2PinA}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-p2-pin-b-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastP2PinB"
+																	className="form-control-sm"
+																	value={values.dreamcastP2PinB}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-uart-rx-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastUartRxPin"
+																	className="form-control-sm"
+																	value={values.dreamcastUartRxPin}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														{(values.dreamcastP2PinA < 255 && values.dreamcastP2PinB < 255) && (
+															<div className="alert alert-info mb-3" style={{fontSize: '0.85em'}}>
+																{t('SettingsPage:dreamcast-p2-enabled-note')}
+															</div>
+														)}
 														<Form.Group className="row mb-3">
 															<Col>
 																<p className="mb-1"><strong>{t('SettingsPage:vmu-manager-label')}</strong></p>

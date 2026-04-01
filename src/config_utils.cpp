@@ -317,6 +317,20 @@ void ConfigUtils::initUnsetPropertiesWithDefaults(Config& config)
     #endif
     INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinA, DEFAULT_DREAMCAST_PIN_A);
     INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastPinB, DEFAULT_DREAMCAST_PIN_B);
+
+    #ifndef DEFAULT_DREAMCAST_P2_PIN_A
+    #define DEFAULT_DREAMCAST_P2_PIN_A 0xFF
+    #endif
+    #ifndef DEFAULT_DREAMCAST_P2_PIN_B
+    #define DEFAULT_DREAMCAST_P2_PIN_B 0xFF
+    #endif
+    #ifndef DEFAULT_DREAMCAST_UART_RX_PIN
+    #define DEFAULT_DREAMCAST_UART_RX_PIN 0xFF
+    #endif
+    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastP2PinA, DEFAULT_DREAMCAST_P2_PIN_A);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastP2PinB, DEFAULT_DREAMCAST_P2_PIN_B);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastUartRxPin, DEFAULT_DREAMCAST_UART_RX_PIN);
+
     INIT_UNSET_PROPERTY(config.gamepadOptions, dcSyncMode, 0);    // DC_SYNC_OFF (raw passthrough)
     INIT_UNSET_PROPERTY(config.gamepadOptions, disableVMU, false);
     // zeroLatencyMode removed — ISR handles all DC commands, always on

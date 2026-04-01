@@ -225,6 +225,12 @@ void GP2040::initializeStandardGpio() {
 	    gpOpts.dreamcastPinA < NUM_BANK0_GPIOS &&
 	    gpOpts.dreamcastPinB < NUM_BANK0_GPIOS) {
 		reservedPins |= (1u << gpOpts.dreamcastPinA) | (1u << gpOpts.dreamcastPinB);
+		if (gpOpts.dreamcastP2PinA < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastP2PinA);
+		if (gpOpts.dreamcastP2PinB < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastP2PinB);
+		if (gpOpts.dreamcastUartRxPin < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastUartRxPin);
 	}
 
 	for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++)
@@ -359,10 +365,16 @@ void GP2040::run() {
 	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
 	bool dcMode = (dcDriver != nullptr);
 
-	// P2: second Maple Bus inside dcDriver (GPIO 23/24), UART RX on GPIO 28
+	// P2: second Maple Bus + UART RX for network input (pins from config)
 	if (dcMode) {
-		dcDriver->initUartRx(26, 1000000);
-		dcDriver->initP2(23, 24);
+		const GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
+		if (opts.dreamcastUartRxPin < NUM_BANK0_GPIOS) {
+			dcDriver->initUartRx(opts.dreamcastUartRxPin, 1000000);
+		}
+		if (opts.dreamcastP2PinA < NUM_BANK0_GPIOS &&
+		    opts.dreamcastP2PinB < NUM_BANK0_GPIOS) {
+			dcDriver->initP2(opts.dreamcastP2PinA, opts.dreamcastP2PinB);
+		}
 	}
 
 	bool configMode = false;

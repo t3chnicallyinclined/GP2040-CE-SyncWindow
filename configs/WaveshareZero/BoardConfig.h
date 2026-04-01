@@ -21,6 +21,13 @@
 #define DEFAULT_DREAMCAST_PIN_A 24
 #define DEFAULT_DREAMCAST_PIN_B 25
 
+// P2 network port for online play — GPIO 22/23
+// (GPIO 23 is SMPS on this board but works as PIO Maple Bus per testing)
+#define DEFAULT_DREAMCAST_P2_PIN_A 22
+#define DEFAULT_DREAMCAST_P2_PIN_B 23
+// UART RX for WiFi bridge — GPIO 28 (accessible on RP2040-Zero)
+#define DEFAULT_DREAMCAST_UART_RX_PIN 28
+
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
 #define GPIO_PIN_02 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |

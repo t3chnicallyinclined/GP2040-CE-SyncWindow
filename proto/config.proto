@@ -46,6 +46,9 @@ message GamepadOptions
     optional uint32 dcSyncWindow = 39;
     optional bool disableVMU = 40;
     optional bool zeroLatencyMode = 41;
+    optional uint32 dreamcastP2PinA = 42;
+    optional uint32 dreamcastP2PinB = 43;
+    optional uint32 dreamcastUartRxPin = 44;
 }
 
 message KeyboardMapping
