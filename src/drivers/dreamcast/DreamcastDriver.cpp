@@ -470,9 +470,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::updateAnalogFromGamepad)(Gam
 
 void DreamcastDriver::initUartRx(uint pin, uint baud) {
     uartRxPio = pio1;
-    // Force uart_rx at offset 28 (maple_rx occupies 0-27)
-    uartRxSmOffset = 28;
-    pio_add_program_at_offset(uartRxPio, &uart_rx_program, uartRxSmOffset);
+    uartRxSmOffset = pio_add_program(uartRxPio, &uart_rx_program);
     uartRxSm = pio_claim_unused_sm(uartRxPio, true);
     uart_rx_program_init(uartRxPio, uartRxSm, uartRxSmOffset, pin, baud);
     uartFramePos = 0;
@@ -481,6 +479,12 @@ void DreamcastDriver::initUartRx(uint pin, uint baud) {
 
 void __no_inline_not_in_flash_func(DreamcastDriver::pollUartRx)() {
     if (!uartRxInitialized) return;
+
+    // Debug: count raw FIFO level to verify PIO is receiving
+    uint fifoLevel = pio_sm_get_rx_fifo_level(uartRxPio, uartRxSm);
+    if (fifoLevel > 0 && enableDiagnostics) {
+        netBadSync += 1000;  // Hacky marker: if we ever see bad>1000, FIFO has data
+    }
 
     // Parse any new UART bytes from PIO FIFO
     while (!pio_sm_is_rx_fifo_empty(uartRxPio, uartRxSm)) {

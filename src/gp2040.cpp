@@ -361,7 +361,7 @@ void GP2040::run() {
 
 	// P2: second Maple Bus inside dcDriver (GPIO 23/24), UART RX on GPIO 28
 	if (dcMode) {
-		dcDriver->initUartRx(28, 1000000);
+		dcDriver->initUartRx(26, 1000000);
 		dcDriver->initP2(23, 24);
 	}
 

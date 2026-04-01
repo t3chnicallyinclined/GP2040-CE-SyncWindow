@@ -84,6 +84,7 @@ while True:
 
     # Forward only the latest state
     if latest is not None:
+        led.toggle()  # Blink LED on every forwarded packet
         uart.write(SYNC)
         uart.write(latest)
         forwarded += 1

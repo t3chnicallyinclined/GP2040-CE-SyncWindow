@@ -335,75 +335,63 @@ void ButtonLayoutScreen::drawScreen() {
             getRenderer()->drawText(0, 5, std::string(buf));
 
         } else if (dc->diagPage == 1) {
-            // PAGE 1: P2 NETWORK INPUT
-            auto* p2 = dcDriverP2;
+            // PAGE 1: P2 NETWORK INPUT (P2 is inside dc driver)
             snprintf(buf, sizeof(buf), "=P2 NET= S1:page");
             getRenderer()->drawText(0, 0, std::string(buf));
 
-            if (!p2) {
-                snprintf(buf, sizeof(buf), "P2 not initialized");
-                getRenderer()->drawText(0, 2, std::string(buf));
-            } else {
-                snprintf(buf, sizeof(buf), "rx:%lu app:%lu",
-                         (unsigned long)p2->netFrameCount,
-                         (unsigned long)p2->netApplyCount);
-                getRenderer()->drawText(0, 1, std::string(buf));
+            snprintf(buf, sizeof(buf), "rx:%lu app:%lu",
+                     (unsigned long)dc->netFrameCount,
+                     (unsigned long)dc->netApplyCount);
+            getRenderer()->drawText(0, 1, std::string(buf));
 
-                {
-                    uint32_t iMin = (p2->netIntervalMin == 0xFFFFFFFF) ? 0 : p2->netIntervalMin;
-                    snprintf(buf, sizeof(buf), "int:%lu-%luus",
-                             (unsigned long)iMin,
-                             (unsigned long)p2->netIntervalMax);
-                }
-                getRenderer()->drawText(0, 2, std::string(buf));
-
-                snprintf(buf, sizeof(buf), "last:%luus",
-                         (unsigned long)p2->netIntervalLast);
-                getRenderer()->drawText(0, 3, std::string(buf));
-
-                snprintf(buf, sizeof(buf), "bad:%lu latch:%s",
-                         (unsigned long)p2->netBadSync,
-                         p2->hasNetState ? "ON" : "off");
-                getRenderer()->drawText(0, 4, std::string(buf));
-
-                snprintf(buf, sizeof(buf), "uart:%s port:%s",
-                         p2->uartRxInitialized ? "OK" : "NO",
-                         p2->portKnown ? "OK" : "NO");
-                getRenderer()->drawText(0, 5, std::string(buf));
+            {
+                uint32_t iMin = (dc->netIntervalMin == 0xFFFFFFFF) ? 0 : dc->netIntervalMin;
+                snprintf(buf, sizeof(buf), "int:%lu-%luus",
+                         (unsigned long)iMin,
+                         (unsigned long)dc->netIntervalMax);
             }
+            getRenderer()->drawText(0, 2, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "last:%luus",
+                     (unsigned long)dc->netIntervalLast);
+            getRenderer()->drawText(0, 3, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "bad:%lu latch:%s",
+                     (unsigned long)dc->netBadSync,
+                     dc->hasNetState ? "ON" : "off");
+            getRenderer()->drawText(0, 4, std::string(buf));
+
+            snprintf(buf, sizeof(buf), "sm:%u p2:%s pk:%s",
+                     (unsigned)dc->uartRxSm,
+                     dc->p2Enabled ? "OK" : "NO",
+                     dc->p2PortKnown ? "OK" : "NO");
+            getRenderer()->drawText(0, 5, std::string(buf));
 
         } else {
             // PAGE 2: LIVE STATE — P1 + P2 side by side
-            auto* p2 = dcDriverP2;
             snprintf(buf, sizeof(buf), "=STATE= S1:page");
             getRenderer()->drawText(0, 0, std::string(buf));
 
-            // P1 cmd9ReadyW3 (physical buttons)
             snprintf(buf, sizeof(buf), "P1:%08lX",
                      (unsigned long)dc->cmd9ReadyW3);
             getRenderer()->drawText(0, 1, std::string(buf));
 
-            // P1 GPIO state
             snprintf(buf, sizeof(buf), "gpio:%08lX",
                      (unsigned long)dc->lastFilteredGpio);
             getRenderer()->drawText(0, 2, std::string(buf));
 
-            // P2 cmd9ReadyW3 (network buttons)
-            if (p2) {
-                snprintf(buf, sizeof(buf), "P2:%08lX",
-                         (unsigned long)p2->cmd9ReadyW3);
-                getRenderer()->drawText(0, 3, std::string(buf));
+            snprintf(buf, sizeof(buf), "P2:%08lX",
+                     (unsigned long)dc->p2Cmd9ReadyW3);
+            getRenderer()->drawText(0, 3, std::string(buf));
 
-                uint32_t age = p2->hasNetState ?
-                    (timer_hw->timerawl - p2->lastNetTimestamp) / 1000 : 9999;
+            {
+                uint32_t age = dc->hasNetState ?
+                    (timer_hw->timerawl - dc->lastNetTimestamp) / 1000 : 9999;
                 snprintf(buf, sizeof(buf), "net:%08lX %lums",
-                         (unsigned long)p2->netLastW3,
+                         (unsigned long)dc->netLastW3,
                          (unsigned long)age);
-                getRenderer()->drawText(0, 4, std::string(buf));
-            } else {
-                snprintf(buf, sizeof(buf), "P2: not init");
-                getRenderer()->drawText(0, 3, std::string(buf));
             }
+            getRenderer()->drawText(0, 4, std::string(buf));
 
             snprintf(buf, sizeof(buf), "mask:%08lX",
                      (unsigned long)dc->buttonGpioMask);
