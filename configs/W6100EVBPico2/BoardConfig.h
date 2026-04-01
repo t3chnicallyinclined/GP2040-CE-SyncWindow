@@ -16,14 +16,13 @@
 #define DEFAULT_DEBOUNCE_DELAY 0
 #define DEFAULT_NOBD_SYNC_DELAY 0
 
-// Dreamcast Maple Bus P1 — GPIO 0/1 (consecutive, free on this board)
+// Dreamcast Maple Bus P1 — GPIO 0/1
 #define DEFAULT_DREAMCAST_PIN_A 0
 #define DEFAULT_DREAMCAST_PIN_B 1
 
-// P2 network port for online play — GPIO 22/23 (consecutive, free on this board)
-// GPIO 23 has no SMPS conflict on W6100-EVB-Pico2 (unlike Pico-family boards)
-#define DEFAULT_DREAMCAST_P2_PIN_A 22
-#define DEFAULT_DREAMCAST_P2_PIN_B 23
+// P2 network port for online play — GPIO 2/3 (right after P1, grouped together)
+#define DEFAULT_DREAMCAST_P2_PIN_A 2
+#define DEFAULT_DREAMCAST_P2_PIN_B 3
 
 // No UART RX needed — W6100 Ethernet replaces WiFi UART bridge
 // Set to 0xFF (disabled). Network input comes via SPI Ethernet.
@@ -31,37 +30,45 @@
 
 // Recommended pin layout for Dreamcast fighting stick:
 //
-// ACTIVE PINS:
+// MAPLE BUS (grouped at top of header):
 //   GPIO 0/1:   P1 Maple Bus (Pin A / Pin B)
-//   GPIO 2-15:  14 buttons (directions + attacks + triggers + start/select)
-//   GPIO 16-21: W6100 Ethernet SPI (reserved, on-board — DO NOT USE)
-//   GPIO 22/23: P2 Maple Bus (Pin A / Pin B)
-//   GPIO 26/27: I2C display (optional)
+//   GPIO 2/3:   P2 Maple Bus (Pin A / Pin B) — online play
 //
-// SPARE:
-//   GPIO 28:    free
-//   GPIO 25:    onboard LED
+// BUTTONS (14 total):
+//   GPIO 4-7:   UP, DOWN, LEFT, RIGHT (directions grouped)
+//   GPIO 8-15:  A, B, X, Y, Z(R1), C(L1), RT(R2), LT(L2)
+//   GPIO 22:    S1 (Select/Coin)
+//   GPIO 28:    S2 (Start)
+//
+// ETHERNET (on-board, DO NOT USE):
+//   GPIO 16-21: W6100 SPI
+//
+// I2C DISPLAY (optional):
+//   GPIO 26/27: I2C SDA/SCL
 //
 // SYSTEM (do not use):
 //   GPIO 24:    VBUS sense
+//   GPIO 25:    onboard LED
 //   GPIO 29:    VSYS ADC
+//
+// NOTE: GPIO 23 is NOT broken out on this board.
 
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
-#define GPIO_PIN_02 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |
-#define GPIO_PIN_03 GpioAction::BUTTON_PRESS_DOWN   // DOWN   | DOWN   | DOWN    | DOWN     | DOWN   | DOWN   |
-#define GPIO_PIN_04 GpioAction::BUTTON_PRESS_LEFT   // LEFT   | LEFT   | LEFT    | LEFT     | LEFT   | LEFT   |
-#define GPIO_PIN_05 GpioAction::BUTTON_PRESS_RIGHT  // RIGHT  | RIGHT  | RIGHT   | RIGHT    | RIGHT  | RIGHT  |
-#define GPIO_PIN_06 GpioAction::BUTTON_PRESS_B1     // B1     | A      | B       | Cross    | 2      | K1     |
-#define GPIO_PIN_07 GpioAction::BUTTON_PRESS_B2     // B2     | B      | A       | Circle   | 3      | K2     |
-#define GPIO_PIN_08 GpioAction::BUTTON_PRESS_B3     // B3     | X      | Y       | Square   | 1      | P1     |
-#define GPIO_PIN_09 GpioAction::BUTTON_PRESS_B4     // B4     | Y      | X       | Triangle | 4      | P2     |
-#define GPIO_PIN_10 GpioAction::BUTTON_PRESS_R1     // R1     | RB     | R       | R1       | 6      | P3     |
-#define GPIO_PIN_11 GpioAction::BUTTON_PRESS_L1     // L1     | LB     | L       | L1       | 5      | P4     |
-#define GPIO_PIN_12 GpioAction::BUTTON_PRESS_R2     // R2     | RT     | ZR      | R2       | 8      | K3     |
-#define GPIO_PIN_13 GpioAction::BUTTON_PRESS_L2     // L2     | LT     | ZL      | L2       | 7      | K4     |
-#define GPIO_PIN_14 GpioAction::BUTTON_PRESS_S1     // S1     | Back   | Minus   | Select   | 9      | Coin   |
-#define GPIO_PIN_15 GpioAction::BUTTON_PRESS_S2     // S2     | Start  | Plus    | Start    | 10     | Start  |
+#define GPIO_PIN_04 GpioAction::BUTTON_PRESS_UP     // UP     | UP     | UP      | UP       | UP     | UP     |
+#define GPIO_PIN_05 GpioAction::BUTTON_PRESS_DOWN   // DOWN   | DOWN   | DOWN    | DOWN     | DOWN   | DOWN   |
+#define GPIO_PIN_06 GpioAction::BUTTON_PRESS_LEFT   // LEFT   | LEFT   | LEFT    | LEFT     | LEFT   | LEFT   |
+#define GPIO_PIN_07 GpioAction::BUTTON_PRESS_RIGHT  // RIGHT  | RIGHT  | RIGHT   | RIGHT    | RIGHT  | RIGHT  |
+#define GPIO_PIN_08 GpioAction::BUTTON_PRESS_B1     // B1     | A      | B       | Cross    | 2      | K1     |
+#define GPIO_PIN_09 GpioAction::BUTTON_PRESS_B2     // B2     | B      | A       | Circle   | 3      | K2     |
+#define GPIO_PIN_10 GpioAction::BUTTON_PRESS_B3     // B3     | X      | Y       | Square   | 1      | P1     |
+#define GPIO_PIN_11 GpioAction::BUTTON_PRESS_B4     // B4     | Y      | X       | Triangle | 4      | P2     |
+#define GPIO_PIN_12 GpioAction::BUTTON_PRESS_R1     // R1     | RB     | R       | R1       | 6      | P3     |
+#define GPIO_PIN_13 GpioAction::BUTTON_PRESS_L1     // L1     | LB     | L       | L1       | 5      | P4     |
+#define GPIO_PIN_14 GpioAction::BUTTON_PRESS_R2     // R2     | RT     | ZR      | R2       | 8      | K3     |
+#define GPIO_PIN_15 GpioAction::BUTTON_PRESS_L2     // L2     | LT     | ZL      | L2       | 7      | K4     |
+#define GPIO_PIN_22 GpioAction::BUTTON_PRESS_S1     // S1     | Back   | Minus   | Select   | 9      | Coin   |
+#define GPIO_PIN_28 GpioAction::BUTTON_PRESS_S2     // S2     | Start  | Plus    | Start    | 10     | Start  |
 
 // Keyboard Mapping Configuration
 //                                            // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |
@@ -85,7 +92,7 @@
 #define KEY_BUTTON_A2   HID_KEY_F2            // A2     | ~      | Capture | ~        | 14     | ~      |
 #define KEY_BUTTON_FN   -1                    // Hotkey Function                                        |
 
-// I2C Display (optional, directly soldered to GP26/GP27)
+// I2C Display (optional, GP26/GP27)
 #define HAS_I2C_DISPLAY 1
 #define I2C0_ENABLED 1
 #define I2C0_PIN_SDA 26
