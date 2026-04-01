@@ -1756,6 +1756,34 @@ export default function SettingsPage() {
 															</Form.Select>
 														</Col>
 													</Form.Group>
+													{values.inputMode === 16 && (
+													<div className="alert alert-info mb-3">
+														{t('SettingsPage:dreamcast-zl-forced-info')}
+													</div>
+													)}
+													<Form.Group className="row mb-3">
+														<Col sm={8}>
+															<Form.Check
+																label={t('SettingsPage:input-timing-zl-label')}
+																type="switch"
+																id="zeroLatencyMode"
+																isInvalid={false}
+																checked={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
+																disabled={values.inputMode === 16}
+																onChange={(e) => {
+																	if (e.target.checked) {
+																		setFieldValue('nobdSyncDelay', 0);
+																		setFieldValue('debounceDelay', 0);
+																	} else {
+																		setFieldValue('debounceDelay', 5);
+																	}
+																}}
+															/>
+															<Form.Text muted>
+																{t('SettingsPage:input-timing-zl-hint')}
+															</Form.Text>
+														</Col>
+													</Form.Group>
 													<Form.Group className="row mb-3">
 														<Form.Label>
 															{t('SettingsPage:input-timing-mode-label')}
@@ -1765,12 +1793,14 @@ export default function SettingsPage() {
 																name="inputTimingMode"
 																className="form-select-sm"
 																value={values.nobdSyncDelay > 0 ? 'nobd' : 'stock'}
-
+																disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																onChange={(e) => {
 																	if (e.target.value === 'stock') {
 																		setFieldValue('nobdSyncDelay', 0);
+																		setFieldValue('debounceDelay', 5);
 																	} else {
 																		setFieldValue('nobdSyncDelay', 5);
+																		setFieldValue('debounceDelay', 0);
 																	}
 																}}
 															>
@@ -1779,11 +1809,6 @@ export default function SettingsPage() {
 															</Form.Select>
 														</Col>
 													</Form.Group>
-														{values.inputMode === 16 && (
-															<Form.Text muted>
-																{t('SettingsPage:dreamcast-debounce-hint')}
-															</Form.Text>
-														)}
 													<Form.Group className="row mb-3">
 														<Form.Label>
 															{values.nobdSyncDelay > 0
@@ -1799,7 +1824,7 @@ export default function SettingsPage() {
 																	value={values.nobdSyncDelay}
 																	error={errors.nobdSyncDelay}
 																	isInvalid={errors.nobdSyncDelay}
-	
+																	disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																	onChange={handleChange}
 																	min={1}
 																	max={500}
@@ -1812,7 +1837,7 @@ export default function SettingsPage() {
 																	value={values.debounceDelay}
 																	error={errors.debounceDelay}
 																	isInvalid={errors.debounceDelay}
-	
+																	disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																	onChange={handleChange}
 																	min={0}
 																	max={5000}
@@ -1820,7 +1845,14 @@ export default function SettingsPage() {
 															)}
 														</Col>
 													</Form.Group>
-													{values.nobdSyncDelay > 0 && (
+													{values.inputMode !== 16 && (
+													<Form.Text muted>
+														{values.nobdSyncDelay > 0
+															? t('SettingsPage:input-timing-nobd-hint')
+															: t('SettingsPage:input-timing-stock-hint')}
+													</Form.Text>
+													)}
+													{values.nobdSyncDelay > 0 && values.inputMode !== 16 && (
 													<Form.Group className="row mb-3">
 														<Col sm={8}>
 															<Form.Check

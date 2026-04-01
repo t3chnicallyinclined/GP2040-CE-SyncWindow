@@ -289,6 +289,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${PROJECT_NAME}_${C
 
 # Generate PIO header for Dreamcast Maple Bus
 pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/src/drivers/dreamcast/maple.pio)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/src/net/uart_rx.pio)
 
 pico_set_program_name(${PROJECT_NAME} "GP2040-CE-NOBD")
 pico_set_program_version(${PROJECT_NAME} ${GIT_REPO_VERSION})

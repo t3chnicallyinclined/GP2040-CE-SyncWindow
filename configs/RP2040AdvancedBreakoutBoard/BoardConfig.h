@@ -16,10 +16,9 @@
 #define DEFAULT_DEBOUNCE_DELAY 0
 #define DEFAULT_NOBD_SYNC_DELAY 0
 
-// Dreamcast Maple Bus default pins — GPIO 23/24 are safe on this board
-// (broken out as normal GPIOs, no SMPS/VBUS conflict)
-#define DEFAULT_DREAMCAST_PIN_A 23
-#define DEFAULT_DREAMCAST_PIN_B 24
+// Dreamcast Maple Bus default pins — GPIO 2/3
+#define DEFAULT_DREAMCAST_PIN_A 2
+#define DEFAULT_DREAMCAST_PIN_B 3
 
 // Main pin mapping Configuration
 //                                                  // GP2040 | Xinput | Switch  | PS3/4/5  | Dinput | Arcade |

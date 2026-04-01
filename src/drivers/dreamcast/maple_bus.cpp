@@ -7,12 +7,12 @@
 // Maple Bus transport layer — wire-order architecture (NO DMA bswap).
 // Based on MaplePad by mackieks (github.com/mackieks/MaplePad).
 
-static MapleBus* irqBusInstance = nullptr;
+// ISR bus instances indexed by PIO1 RX SM number.
+// Supports multiple Maple Bus instances sharing PIO1_IRQ_0.
+static MapleBus* irqBusInstances[4] = {};
 
-static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
-    MapleBus* bus = irqBusInstance;
-    if (!bus || !bus->isrCallback) return;
-
+// Per-bus ISR processing. Called when the SM's IRQ flag is set.
+static void __no_inline_not_in_flash_func(handleBusIrq)(MapleBus* bus) {
     bus->rxArrivalTimestamp = timer_hw->timerawl;
 
     // Brief spin for DMA to drain PIO RX FIFO (handles large packets like CMD12 = 36 words).
@@ -43,38 +43,42 @@ static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
             bus->isrWordsReceived = wordsReceived;
 
             // Dispatch — callback handles all commands via isrSendFifo/isrSendDma.
-            // isrSendFifo/isrSendDma will disable RX SM + abort DMA + clear IRQ
-            // before sending. If the callback falls through (e.g., VMU → main loop),
-            // it sets isrNvicDisabled and leaves RX state for pollReceive().
             bus->isrCallback(bus);
 
             if (bus->isrTxFired) {
-                // Callback sent a response — RX cleanup already done by isrSendFifo/isrSendDma.
                 return;
             }
 
             if (bus->isrNvicDisabled) {
-                // Callback deferred to main loop (VMU). NVIC disabled, PIO IRQ flag
-                // still set for pollReceive(). Don't touch RX state.
                 return;
             }
 
             // No response and no fallthrough — no destination match.
-            // Disable RX SM + clear IRQ so we don't re-enter, restart via main loop.
             pio_sm_set_enabled(bus->getRxPio(), bus->getRxSm(), false);
             dma_channel_abort(bus->rxDmaChannel);
             pio_interrupt_clear(bus->getRxPio(), bus->getRxSm());
-            bus->isrTxFired = true;  // Main loop will restart RX
+            bus->isrTxFired = true;
             return;
         }
     }
 
-    // CRC fail or too few words: disable NVIC to prevent re-entry.
-    // PIO IRQ flag left set so pollReceive() can detect end-of-packet.
+    // CRC fail or too few words: disable THIS SM's IRQ source only.
+    // Other buses on the same PIO keep working.
     bus->debugIsrFallthrough++;
-    uint irqNum = (bus->getRxPio() == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
-    irq_set_enabled(irqNum, false);
+    pio_set_irq0_source_enabled(bus->getRxPio(),
+        (pio_interrupt_source)(pis_interrupt0 + bus->getRxSm()), false);
     bus->isrNvicDisabled = true;
+}
+
+// Top-level ISR handler. Checks which PIO1 SM(s) fired and routes to the right bus.
+static void __no_inline_not_in_flash_func(mapleRxIrqHandler)() {
+    uint32_t irqFlags = pio1->irq;
+    for (uint sm = 0; sm < 4; sm++) {
+        MapleBus* bus = irqBusInstances[sm];
+        if (bus && bus->isrCallback && (irqFlags & (1u << sm))) {
+            handleBusIrq(bus);
+        }
+    }
 }
 
 // ISR TX helper: stuff ≤8 words directly into PIO TX FIFO.
@@ -117,6 +121,10 @@ MapleBus::MapleBus()
     memset(rxDmaBuf, 0, sizeof(rxDmaBuf));
 }
 
+// Shared PIO program offsets — loaded once, reused by all bus instances.
+static int sharedTxOffset = -1;
+static int sharedRxOffset = -1;
+
 bool MapleBus::init(uint pin_a, uint pin_b) {
     if (initialized) return true;
     if (pin_b != pin_a + 1) return false; // Pins must be consecutive
@@ -128,14 +136,16 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     // SM is enabled by init and stalls at `pull` (both pins HIGH = idle)
     txPio = pio0;
     txSm = pio_claim_unused_sm(txPio, true);
-    uint offset = pio_add_program(txPio, &maple_tx_program);
-    txSmOffset = offset;
+    if (sharedTxOffset < 0) {
+        sharedTxOffset = pio_add_program(txPio, &maple_tx_program);
+    }
+    txSmOffset = sharedTxOffset;
     // TX clkdiv for 480ns/bit (Maple Bus spec, ~2 Mbps).
     // maple_tx data loop = 27 PIO cycles per bit.
     // clkdiv = target_ns_per_bit * sys_freq_MHz / (cycles_per_bit * 1000)
     uint32_t sysHz = clock_get_hz(clk_sys);
     float txClkDiv = (480.0f * (sysHz / 1e6f)) / (27.0f * 1000.0f);
-    maple_tx_program_init(txPio, txSm, offset, pinA, pinB, txClkDiv);
+    maple_tx_program_init(txPio, txSm, txSmOffset, pinA, pinB, txClkDiv);
 
     // TX DMA channel — NO bswap. All data is already in wire (network) order.
     txDmaChannel = dma_claim_unused_channel(true);
@@ -154,14 +164,13 @@ bool MapleBus::init(uint pin_a, uint pin_b) {
     gpio_pull_up(pinA);
     gpio_pull_up(pinB);
 
-    // RX: Use PIO1, single state machine (maple_rx — ported from MaplePad/DreamPicoPort).
-    // This SM does full Maple Bus protocol decode in hardware:
-    // - Detects sync sequence (4 B-toggles while A is low)
-    // - Samples data bits at correct clock phases
-    // - Signals end-of-packet via IRQ
-    // Each FIFO word = 32 decoded data bits = 4 bytes of Maple payload.
+    // RX: Use PIO1. Multiple bus instances share the same PIO program code —
+    // each SM gets its own pin config and clock divider.
     rxPio = pio1;
-    rxSmOffset = pio_add_program(rxPio, &maple_rx_program);
+    if (sharedRxOffset < 0) {
+        sharedRxOffset = pio_add_program(rxPio, &maple_rx_program);
+    }
+    rxSmOffset = sharedRxOffset;
     rxSm = pio_claim_unused_sm(rxPio, true);
     maple_rx_program_init(rxPio, rxSm, rxSmOffset, pinA, pinB, 1.0f);
 
@@ -227,9 +236,11 @@ void __no_inline_not_in_flash_func(MapleBus::startRx)() {
     // Enable SM — it will wait for sync sequence
     pio_sm_set_enabled(rxPio, rxSm, true);
 
-    // Re-enable NVIC interrupt if the ISR disabled it for a non-CMD9 packet.
+    // Re-enable this SM's IRQ source if it was disabled (CRC fail / VMU fallthrough).
     if (isrNvicDisabled) {
         isrNvicDisabled = false;
+        pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), true);
+        // Ensure NVIC is also enabled (safe to call even if already enabled)
         uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
         irq_set_enabled(irqNum, true);
     }
@@ -457,15 +468,21 @@ void MapleBus::enableIsrDispatch(MapleIsrCallback callback) {
     if (fastPathEnabled || !initialized) return;
 
     isrCallback = callback;
-    irqBusInstance = this;
+    irqBusInstances[rxSm] = this;
     isrTxFired = false;
 
     // Enable PIO IRQ for end-of-packet notification.
     // maple_rx uses `irq wait 0 rel` — SM-relative IRQ 0 maps to PIO IRQ rxSm.
     uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
     pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), true);
-    irq_set_exclusive_handler(irqNum, mapleRxIrqHandler);
-    irq_set_priority(irqNum, 0);  // Highest priority
+
+    // Only set the handler once — multiple buses share the same NVIC IRQ.
+    static bool handlerSet = false;
+    if (!handlerSet) {
+        irq_set_exclusive_handler(irqNum, mapleRxIrqHandler);
+        irq_set_priority(irqNum, 0);  // Highest priority
+        handlerSet = true;
+    }
     irq_set_enabled(irqNum, true);
 
     fastPathEnabled = true;
@@ -474,14 +491,22 @@ void MapleBus::enableIsrDispatch(MapleIsrCallback callback) {
 void MapleBus::disableIsrDispatch() {
     if (!fastPathEnabled) return;
 
-    uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
-    irq_set_enabled(irqNum, false);
     pio_set_irq0_source_enabled(rxPio, (pio_interrupt_source)(pis_interrupt0 + rxSm), false);
 
     isrCallback = nullptr;
-    irqBusInstance = nullptr;
+    irqBusInstances[rxSm] = nullptr;
     isrTxFired = false;
     fastPathEnabled = false;
+
+    // Only disable NVIC if no other buses are using it
+    bool anyActive = false;
+    for (int i = 0; i < 4; i++) {
+        if (irqBusInstances[i]) { anyActive = true; break; }
+    }
+    if (!anyActive) {
+        uint irqNum = (rxPio == pio1) ? PIO1_IRQ_0 : PIO0_IRQ_0;
+        irq_set_enabled(irqNum, false);
+    }
 }
 
 void __no_inline_not_in_flash_func(MapleBus::clearRxAfterFastPath)() {
