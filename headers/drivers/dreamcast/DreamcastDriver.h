@@ -123,6 +123,7 @@ public:
     void pollNetwork();     // Calls whichever transport is active
     void updateCmd9FromNetwork(uint32_t w3);
     bool ethernetInitialized = false;
+    bool netplayActive = false;    // True only when server is responding
     uint8_t ethernetChipVersion = 0;
     uint8_t serverIp[4] = {0};     // Relay server IP (0 = not configured)
     uint16_t serverPort = 4977;    // Relay server port

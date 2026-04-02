@@ -453,15 +453,21 @@ void GP2040::run() {
 		// DC mode: ISR handles all commands. Main loop just keeps
 		// lookup table + analog current and does ISR TX cleanup.
 		if (dcMode) {
-			// P1: physical buttons via lookup table
+			// P1: always read physical buttons into lookup table
 			dcDriver->updateCmd9FromGpio(gamepad->debouncedGpio);
 			dcDriver->updateAnalogFromGamepad(gamepad);
 
-			// Send local P1 state to relay server
-			dcDriver->sendLocalState();
+			if (dcDriver->ethernetInitialized) {
+				// Send local P1 state to relay server
+				dcDriver->sendLocalState();
 
-			// Receive merged state from server (P1+P2)
-			dcDriver->pollNetwork();
+				// Receive from network (server or direct)
+				// If server responds with 8-byte merged state,
+				// netplayActive=true and P1+P2 come from server.
+				// If server stops responding, netplayActive auto-disables
+				// and P1 stays on local GPIO (set above).
+				dcDriver->pollNetwork();
+			}
 		}
 	}
 }

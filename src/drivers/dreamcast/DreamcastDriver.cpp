@@ -594,6 +594,12 @@ void __no_inline_not_in_flash_func(DreamcastDriver::sendLocalState)() {
     data[2] = (w3 >> 8) & 0xFF;
     data[3] = w3 & 0xFF;
     w6100_udp_send(data, 4, serverIp, serverPort);
+
+    // Timeout netplay if server stops responding (2 seconds)
+    if (netplayActive && (timer_hw->timerawl - lastNetTimestamp > 2000000)) {
+        netplayActive = false;
+        hasNetState = false;
+    }
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {
@@ -619,6 +625,9 @@ void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {
     if (gotPacket) {
         if (lastLen >= 8) {
             // 8-byte merged packet from relay server: {P1_W3, P2_W3}
+            // Server responding = netplay is active
+            netplayActive = true;
+
             uint32_t p1_w3 = ((uint32_t)lastData[0] << 24) |
                              ((uint32_t)lastData[1] << 16) |
                              ((uint32_t)lastData[2] << 8)  |
@@ -628,7 +637,7 @@ void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {
                              ((uint32_t)lastData[6] << 8)  |
                              (uint32_t)lastData[7];
 
-            // Apply P1 from server (overrides local GPIO)
+            // Apply P1 from server (overrides local GPIO for sync)
             cmd9ReadyW3 = p1_w3;
             if (portKnown) {
                 uint32_t xorAll = cachedCrcXorConst ^ p1_w3;
