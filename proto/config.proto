@@ -49,6 +49,13 @@ message GamepadOptions
     optional uint32 dreamcastP2PinA = 42;
     optional uint32 dreamcastP2PinB = 43;
     optional uint32 dreamcastUartRxPin = 44;
+    optional bool maplecastEnabled = 45;
+    optional uint32 maplecastServerIP1 = 46;  // IP octet 1 (e.g. 192)
+    optional uint32 maplecastServerIP2 = 47;  // IP octet 2 (e.g. 168)
+    optional uint32 maplecastServerIP3 = 48;  // IP octet 3 (e.g. 1)
+    optional uint32 maplecastServerIP4 = 49;  // IP octet 4 (e.g. 100)
+    optional uint32 maplecastServerPort = 50; // UDP port (default 7101)
+    optional uint32 maplecastPlayerSlot = 51; // 0=P1, 1=P2
 }
 
 message KeyboardMapping

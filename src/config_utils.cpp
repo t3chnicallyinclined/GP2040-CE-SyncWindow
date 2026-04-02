@@ -331,6 +331,15 @@ void ConfigUtils::initUnsetPropertiesWithDefaults(Config& config)
     INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastP2PinB, DEFAULT_DREAMCAST_P2_PIN_B);
     INIT_UNSET_PROPERTY(config.gamepadOptions, dreamcastUartRxPin, DEFAULT_DREAMCAST_UART_RX_PIN);
 
+    // MapleCast server settings
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastEnabled, false);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastServerIP1, 192);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastServerIP2, 168);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastServerIP3, 1);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastServerIP4, 100);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastServerPort, 7101);
+    INIT_UNSET_PROPERTY(config.gamepadOptions, maplecastPlayerSlot, 0);
+
     INIT_UNSET_PROPERTY(config.gamepadOptions, dcSyncMode, 0);    // DC_SYNC_OFF (raw passthrough)
     INIT_UNSET_PROPERTY(config.gamepadOptions, disableVMU, false);
     // zeroLatencyMode removed — ISR handles all DC commands, always on

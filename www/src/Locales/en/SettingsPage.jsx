@@ -205,6 +205,12 @@ export default {
 	'dreamcast-p2-pin-b-label': 'P2 Maple Bus Pin B',
 	'dreamcast-uart-rx-label': 'UART RX Pin (network input)',
 	'dreamcast-p2-enabled-note': 'P2 online port enabled. Connect second DC cable to these pins + a WiFi UART bridge to the RX pin.',
+	'maplecast-section-title': 'MapleCast Online',
+	'maplecast-section-desc': 'Send controller inputs to a MapleCast game server over Ethernet (W6100). The server runs the game and streams to browsers.',
+	'maplecast-enabled-label': 'Enable MapleCast',
+	'maplecast-server-ip-label': 'Server IP Address',
+	'maplecast-server-port-label': 'Server Port',
+	'maplecast-player-label': 'Player Slot',
 	// DC sync mode labels removed — always raw passthrough (matches real DC hardware)
 	'vmu-manager-label': 'VMU Manager',
 	'vmu-manager-description': 'Download or upload VMU save data, or format the VMU.',

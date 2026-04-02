@@ -671,6 +671,13 @@ std::string setGamepadOptions()
     readDoc(gamepadOptions.dreamcastP2PinA, doc, "dreamcastP2PinA");
     readDoc(gamepadOptions.dreamcastP2PinB, doc, "dreamcastP2PinB");
     readDoc(gamepadOptions.dreamcastUartRxPin, doc, "dreamcastUartRxPin");
+    readDoc(gamepadOptions.maplecastEnabled, doc, "maplecastEnabled");
+    readDoc(gamepadOptions.maplecastServerIP1, doc, "maplecastServerIP1");
+    readDoc(gamepadOptions.maplecastServerIP2, doc, "maplecastServerIP2");
+    readDoc(gamepadOptions.maplecastServerIP3, doc, "maplecastServerIP3");
+    readDoc(gamepadOptions.maplecastServerIP4, doc, "maplecastServerIP4");
+    readDoc(gamepadOptions.maplecastServerPort, doc, "maplecastServerPort");
+    readDoc(gamepadOptions.maplecastPlayerSlot, doc, "maplecastPlayerSlot");
     // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     readDoc(gamepadOptions.disableVMU, doc, "disableVMU");
     // zeroLatencyMode removed — ISR handles all DC commands, always on
@@ -751,6 +758,13 @@ std::string getGamepadOptions()
     writeDoc(doc, "dreamcastP2PinA", gamepadOptions.dreamcastP2PinA);
     writeDoc(doc, "dreamcastP2PinB", gamepadOptions.dreamcastP2PinB);
     writeDoc(doc, "dreamcastUartRxPin", gamepadOptions.dreamcastUartRxPin);
+    writeDoc(doc, "maplecastEnabled", gamepadOptions.maplecastEnabled ? 1 : 0);
+    writeDoc(doc, "maplecastServerIP1", gamepadOptions.maplecastServerIP1);
+    writeDoc(doc, "maplecastServerIP2", gamepadOptions.maplecastServerIP2);
+    writeDoc(doc, "maplecastServerIP3", gamepadOptions.maplecastServerIP3);
+    writeDoc(doc, "maplecastServerIP4", gamepadOptions.maplecastServerIP4);
+    writeDoc(doc, "maplecastServerPort", gamepadOptions.maplecastServerPort);
+    writeDoc(doc, "maplecastPlayerSlot", gamepadOptions.maplecastPlayerSlot);
     // dcSyncMode removed from UI — always DC_SYNC_OFF (raw passthrough)
     writeDoc(doc, "disableVMU", gamepadOptions.disableVMU ? 1 : 0);
     // zeroLatencyMode removed — ISR handles all DC commands, always on

@@ -75,6 +75,28 @@ void __no_inline_not_in_flash_func(DreamcastDriver::isrCommandDispatch)(MapleBus
             }
 
             bus->isrSendFifo(ctrlBuf, 6);
+
+            // Extract game state telemetry from extended CMD9 (P1 only).
+            // ROM patch adds extra words after the function code:
+            //   rxDmaBuf[0] = header (numWords=5 for 4 telemetry words)
+            //   rxDmaBuf[1] = func code (0x01000000, standard)
+            //   rxDmaBuf[2..5] = telemetry (health, timer, meter, match state)
+            //   rxDmaBuf[6] = CRC
+            // Reads happen AFTER response is queued — PIO is physically
+            // transmitting while we read.  Zero added latency.
+            if (!isP2) {
+                uint8_t nw = maple_hdr_numWords(hdr);
+                if (nw > 1) {
+                    uint8_t extra = nw - 1;  // subtract function code word
+                    if (extra > DreamcastDriver::TELEMETRY_MAX_WORDS)
+                        extra = DreamcastDriver::TELEMETRY_MAX_WORDS;
+                    for (uint8_t i = 0; i < extra; i++)
+                        drv->telemetry[i] = bus->rxDmaBuf[2 + i];
+                    drv->telemetryWordCount = extra;
+                    drv->hasTelemetry = true;
+                }
+            }
+
             if (drv->enableDiagnostics) {
                 drv->debugRxCount++;
                 drv->debugCmd9Count++;
@@ -574,10 +596,18 @@ void DreamcastDriver::initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, ui
         return;
     }
 
-    // Set relay server IP — default to gateway (PC on same network)
-    // TODO: make configurable via web UI
-    serverIp[0] = 192; serverIp[1] = 168; serverIp[2] = 1; serverIp[3] = 63;
-    serverPort = 4977;
+    // MapleCast server IP/port — configured via web UI
+    const GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
+    if (opts.maplecastEnabled) {
+        serverIp[0] = opts.maplecastServerIP1;
+        serverIp[1] = opts.maplecastServerIP2;
+        serverIp[2] = opts.maplecastServerIP3;
+        serverIp[3] = opts.maplecastServerIP4;
+        serverPort = opts.maplecastServerPort;
+    } else {
+        serverIp[0] = 0; serverIp[1] = 0; serverIp[2] = 0; serverIp[3] = 0;
+        serverPort = 0;
+    }
 
     ethernetInitialized = true;
 }
@@ -600,6 +630,29 @@ void __no_inline_not_in_flash_func(DreamcastDriver::sendLocalState)() {
         netplayActive = false;
         hasNetState = false;
     }
+}
+
+void DreamcastDriver::sendTelemetry() {
+    if (!ethernetInitialized || !hasTelemetry) return;
+    if (serverIp[0] == 0 && serverIp[1] == 0 && serverIp[2] == 0 && serverIp[3] == 0) return;
+
+    // Forward game state telemetry from extended CMD9 to relay server.
+    // Packet format: [0x54 'T'] [wordCount] [telemetry words...]
+    // 0x54 = 'T' header byte — distinguishes from 4-byte button packets.
+    uint8_t wordCount = telemetryWordCount;
+    uint8_t buf[2 + TELEMETRY_MAX_WORDS * 4];
+    buf[0] = 0x54;  // 'T' — telemetry packet marker
+    buf[1] = wordCount;
+    for (uint8_t i = 0; i < wordCount; i++) {
+        uint32_t w = telemetry[i];
+        buf[2 + i*4 + 0] = (w >> 24) & 0xFF;
+        buf[2 + i*4 + 1] = (w >> 16) & 0xFF;
+        buf[2 + i*4 + 2] = (w >> 8) & 0xFF;
+        buf[2 + i*4 + 3] = w & 0xFF;
+    }
+    w6100_udp_send(buf, 2 + wordCount * 4, serverIp, serverPort);
+    hasTelemetry = false;
+    telemetryTxCount++;
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {

@@ -464,6 +464,13 @@ const schema = yup.object().shape({
 	dreamcastP2PinA: yup.number().min(0).max(255).label('Dreamcast P2 Pin A'),
 	dreamcastP2PinB: yup.number().min(0).max(255).label('Dreamcast P2 Pin B'),
 	dreamcastUartRxPin: yup.number().min(0).max(255).label('Dreamcast UART RX Pin'),
+	maplecastEnabled: yup.number().label('MapleCast Enabled'),
+	maplecastServerIP1: yup.number().min(0).max(255).label('MapleCast IP 1'),
+	maplecastServerIP2: yup.number().min(0).max(255).label('MapleCast IP 2'),
+	maplecastServerIP3: yup.number().min(0).max(255).label('MapleCast IP 3'),
+	maplecastServerIP4: yup.number().min(0).max(255).label('MapleCast IP 4'),
+	maplecastServerPort: yup.number().min(1).max(65535).label('MapleCast Port'),
+	maplecastPlayerSlot: yup.number().min(0).max(1).label('MapleCast Player'),
 	// dcSyncMode: removed from UI — always Off (raw passthrough like real DC hardware)
 	// zeroLatencyMode: removed — ISR handles all DC commands, always on
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
@@ -1665,6 +1672,56 @@ export default function SettingsPage() {
 																{t('SettingsPage:dreamcast-p2-enabled-note')}
 															</div>
 														)}
+														<hr className="my-3" />
+														<p className="mb-2"><strong>{t('SettingsPage:maplecast-section-title')}</strong></p>
+														<p className="text-muted mb-2" style={{fontSize: '0.85em'}}>
+															{t('SettingsPage:maplecast-section-desc')}
+														</p>
+														<Form.Group className="row mb-3">
+															<Form.Label>{t('SettingsPage:maplecast-enabled-label')}</Form.Label>
+															<Col sm={3}>
+																<Form.Check
+																	type="switch"
+																	name="maplecastEnabled"
+																	checked={!!values.maplecastEnabled}
+																	onChange={(e) => handleChange({target: {name: 'maplecastEnabled', value: e.target.checked ? 1 : 0}})}
+																/>
+															</Col>
+														</Form.Group>
+														{!!values.maplecastEnabled && (
+														<>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-server-ip-label')}</Form.Label>
+																<Col sm={8}>
+																	<div className="d-flex gap-1 align-items-center">
+																		<Form.Control type="number" name="maplecastServerIP1" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP1} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP2" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP2} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP3" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP3} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP4" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP4} onChange={handleChange} min={0} max={255} />
+																	</div>
+																</Col>
+															</Form.Group>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-server-port-label')}</Form.Label>
+																<Col sm={3}>
+																	<Form.Control type="number" name="maplecastServerPort" className="form-control-sm" value={values.maplecastServerPort} onChange={handleChange} min={1} max={65535} />
+																</Col>
+															</Form.Group>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-player-label')}</Form.Label>
+																<Col sm={3}>
+																	<Form.Select name="maplecastPlayerSlot" className="form-control-sm" value={values.maplecastPlayerSlot} onChange={handleChange}>
+																		<option value={0}>Player 1</option>
+																		<option value={1}>Player 2</option>
+																	</Form.Select>
+																</Col>
+															</Form.Group>
+														</>
+														)}
+														<hr className="my-3" />
 														<Form.Group className="row mb-3">
 															<Col>
 																<p className="mb-1"><strong>{t('SettingsPage:vmu-manager-label')}</strong></p>
