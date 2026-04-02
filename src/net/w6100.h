@@ -80,6 +80,9 @@ bool w6100_udp_open(uint16_t port);
 // If > 0, fills src_ip (4 bytes), src_port, and data (up to max_len).
 int w6100_udp_recv(uint8_t* data, uint16_t max_len, uint8_t* src_ip, uint16_t* src_port);
 
+// Send UDP data from socket 0 to specified destination.
+int w6100_udp_send(const uint8_t* data, uint16_t len, const uint8_t dest_ip[4], uint16_t dest_port);
+
 // Check if Ethernet link is up.
 bool w6100_link_up(void);
 

@@ -457,7 +457,10 @@ void GP2040::run() {
 			dcDriver->updateCmd9FromGpio(gamepad->debouncedGpio);
 			dcDriver->updateAnalogFromGamepad(gamepad);
 
-			// P2: network buttons from UART
+			// Send local P1 state to relay server
+			dcDriver->sendLocalState();
+
+			// Receive merged state from server (P1+P2)
 			dcDriver->pollNetwork();
 		}
 	}

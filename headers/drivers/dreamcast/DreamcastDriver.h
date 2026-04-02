@@ -119,10 +119,13 @@ public:
     void initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, uint pin_mosi, uint pin_rst);
     void pollUartRx();
     void pollEthernet();
-    void pollNetwork();  // Calls whichever transport is active
+    void sendLocalState();  // TX local P1 buttons to relay server
+    void pollNetwork();     // Calls whichever transport is active
     void updateCmd9FromNetwork(uint32_t w3);
     bool ethernetInitialized = false;
-    uint8_t ethernetChipVersion = 0;  // Diagnostic: version byte read from W6100
+    uint8_t ethernetChipVersion = 0;
+    uint8_t serverIp[4] = {0};     // Relay server IP (0 = not configured)
+    uint16_t serverPort = 4977;    // Relay server port
     PIO      uartRxPio = nullptr;
     uint     uartRxSm = 0;
     uint     uartRxSmOffset = 0;

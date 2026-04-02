@@ -574,34 +574,84 @@ void DreamcastDriver::initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, ui
         return;
     }
 
+    // Set relay server IP — default to gateway (PC on same network)
+    // TODO: make configurable via web UI
+    serverIp[0] = 192; serverIp[1] = 168; serverIp[2] = 1; serverIp[3] = 63;
+    serverPort = 4977;
+
     ethernetInitialized = true;
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::sendLocalState)() {
+    if (!ethernetInitialized) return;
+    if (serverIp[0] == 0 && serverIp[1] == 0 && serverIp[2] == 0 && serverIp[3] == 0) return;
+
+    // Send P1 physical button state to relay server
+    uint32_t w3 = cmd9ReadyW3;
+    uint8_t data[4];
+    data[0] = (w3 >> 24) & 0xFF;
+    data[1] = (w3 >> 16) & 0xFF;
+    data[2] = (w3 >> 8) & 0xFF;
+    data[3] = w3 & 0xFF;
+    w6100_udp_send(data, 4, serverIp, serverPort);
 }
 
 void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {
     if (!ethernetInitialized) return;
 
-    // Drain all pending UDP packets, keep only the latest
-    uint8_t data[4];
-    uint8_t lastData[4] = {0, 0, 0xFF, 0xFF};  // Default: all released
+    // Receive merged state from relay server: 8 bytes = P1 W3 (4) + P2 W3 (4)
+    // Or legacy 4-byte P2-only packets (direct mode without server)
+    uint8_t data[8];
+    uint8_t lastData[8] = {0};
+    int lastLen = 0;
     bool gotPacket = false;
 
+    // Drain all pending, keep latest
     while (true) {
-        int len = w6100_udp_recv(data, 4, nullptr, nullptr);
-        if (len < 4) break;
-        memcpy(lastData, data, 4);
+        int len = w6100_udp_recv(data, 8, nullptr, nullptr);
+        if (len <= 0) break;
+        memcpy(lastData, data, len);
+        lastLen = len;
         gotPacket = true;
         if (enableDiagnostics) netFrameCount++;
     }
 
     if (gotPacket) {
-        uint32_t w3 = ((uint32_t)lastData[0] << 24) |
-                      ((uint32_t)lastData[1] << 16) |
-                      ((uint32_t)lastData[2] << 8)  |
-                      (uint32_t)lastData[3];
-        lastNetW3 = w3;
+        if (lastLen >= 8) {
+            // 8-byte merged packet from relay server: {P1_W3, P2_W3}
+            uint32_t p1_w3 = ((uint32_t)lastData[0] << 24) |
+                             ((uint32_t)lastData[1] << 16) |
+                             ((uint32_t)lastData[2] << 8)  |
+                             (uint32_t)lastData[3];
+            uint32_t p2_w3 = ((uint32_t)lastData[4] << 24) |
+                             ((uint32_t)lastData[5] << 16) |
+                             ((uint32_t)lastData[6] << 8)  |
+                             (uint32_t)lastData[7];
+
+            // Apply P1 from server (overrides local GPIO)
+            cmd9ReadyW3 = p1_w3;
+            if (portKnown) {
+                uint32_t xorAll = cachedCrcXorConst ^ p1_w3;
+                uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
+                cmd9ReadyW5 = (uint32_t)crc << 24;
+            }
+
+            // Apply P2 from server
+            updateCmd9FromNetwork(p2_w3);
+
+            lastNetW3 = p2_w3;
+        } else if (lastLen >= 4) {
+            // 4-byte legacy packet: P2 only (direct mode, no server)
+            uint32_t w3 = ((uint32_t)lastData[0] << 24) |
+                          ((uint32_t)lastData[1] << 16) |
+                          ((uint32_t)lastData[2] << 8)  |
+                          (uint32_t)lastData[3];
+            updateCmd9FromNetwork(w3);
+            lastNetW3 = w3;
+        }
+
         lastNetTimestamp = timer_hw->timerawl;
         hasNetState = true;
-        updateCmd9FromNetwork(w3);
     }
 
     // Re-apply latched state or timeout

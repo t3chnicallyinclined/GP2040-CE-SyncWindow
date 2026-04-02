@@ -191,6 +191,11 @@ int w6100_udp_recv(uint8_t* data, uint16_t max_len, uint8_t* src_ip, uint16_t* s
     return (len > 0) ? len : 0;
 }
 
+int w6100_udp_send(const uint8_t* data, uint16_t len, const uint8_t dest_ip[4], uint16_t dest_port) {
+    int32_t ret = sendto(0, (uint8_t*)data, len, (uint8_t*)dest_ip, dest_port, 4);
+    return (ret > 0) ? ret : 0;
+}
+
 bool w6100_link_up(void) {
     return (getPHYSR() & 0x01) != 0;
 }
