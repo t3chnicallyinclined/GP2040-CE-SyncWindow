@@ -11,6 +11,9 @@
 
 #define BOARD_CONFIG_LABEL "W6100-EVB-Pico2"
 
+// Default to Dreamcast input mode
+#define DEFAULT_INPUT_MODE INPUT_MODE_DREAMCAST
+
 // Dreamcast mode: no debounce, no NOBD sync window.
 // The 16ms Maple Bus polling interval acts as a natural sync window.
 #define DEFAULT_DEBOUNCE_DELAY 0

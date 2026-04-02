@@ -114,10 +114,15 @@ public:
     void updateCmd9FromGpio(uint32_t filteredGpio);
     void updateAnalogFromGamepad(Gamepad* gamepad);
 
-    // Network input via PIO UART RX (GPIO 23, 1 Mbps)
+    // Network input — UART (WiFi bridge) or Ethernet (W6100)
     void initUartRx(uint pin, uint baud);
+    void initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, uint pin_mosi, uint pin_rst);
     void pollUartRx();
+    void pollEthernet();
+    void pollNetwork();  // Calls whichever transport is active
     void updateCmd9FromNetwork(uint32_t w3);
+    bool ethernetInitialized = false;
+    uint8_t ethernetChipVersion = 0;  // Diagnostic: version byte read from W6100
     PIO      uartRxPio = nullptr;
     uint     uartRxSm = 0;
     uint     uartRxSmOffset = 0;

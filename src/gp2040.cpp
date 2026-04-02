@@ -365,10 +365,16 @@ void GP2040::run() {
 	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
 	bool dcMode = (dcDriver != nullptr);
 
-	// P2: second Maple Bus + UART RX for network input (pins from config)
+	// P2: second Maple Bus + network input (UART or Ethernet)
 	if (dcMode) {
 		const GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
-		if (opts.dreamcastUartRxPin < NUM_BANK0_GPIOS) {
+
+		// Always try W6100 Ethernet first (auto-detect via SPI version read)
+		// If W6100 not present, falls back to UART
+		dcDriver->initEthernet(16, 17, 18, 19, 20);
+
+		// Fall back to UART if Ethernet not detected and UART pin is configured
+		if (!dcDriver->ethernetInitialized && opts.dreamcastUartRxPin < NUM_BANK0_GPIOS) {
 			dcDriver->initUartRx(opts.dreamcastUartRxPin, 1000000);
 		}
 		if (opts.dreamcastP2PinA < NUM_BANK0_GPIOS &&
@@ -452,7 +458,7 @@ void GP2040::run() {
 			dcDriver->updateAnalogFromGamepad(gamepad);
 
 			// P2: network buttons from UART
-			dcDriver->pollUartRx();
+			dcDriver->pollNetwork();
 		}
 	}
 }

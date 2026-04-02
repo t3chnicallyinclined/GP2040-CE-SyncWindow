@@ -361,10 +361,10 @@ void ButtonLayoutScreen::drawScreen() {
                      dc->hasNetState ? "ON" : "off");
             getRenderer()->drawText(0, 4, std::string(buf));
 
-            snprintf(buf, sizeof(buf), "sm:%u p2:%s pk:%s",
-                     (unsigned)dc->uartRxSm,
-                     dc->p2Enabled ? "OK" : "NO",
-                     dc->p2PortKnown ? "OK" : "NO");
+            snprintf(buf, sizeof(buf), "eth:%s v:%02X p2:%s",
+                     dc->ethernetInitialized ? "OK" : "NO",
+                     (unsigned)dc->ethernetChipVersion,
+                     dc->p2Enabled ? "OK" : "NO");
             getRenderer()->drawText(0, 5, std::string(buf));
 
         } else {

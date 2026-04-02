@@ -211,6 +211,7 @@ src/drivers/xinput/XInputDriver.cpp
 src/drivers/dreamcast/maple_bus.cpp
 src/drivers/dreamcast/DreamcastDriver.cpp
 src/drivers/dreamcast/DreamcastVMU.cpp
+src/net/w6100.cpp
 src/interfaces/i2c/i2cdevicebase.cpp
 src/interfaces/i2c/pcf8575/pcf8575.cpp
 src/interfaces/i2c/ssd1306/obd_ssd1306.cpp
@@ -311,6 +312,8 @@ hardware_adc
 hardware_pwm
 hardware_pio
 hardware_dma
+hardware_spi
+ioLibrary_Driver
 PicoPeripherals
 WiiExtension
 SNESpad
@@ -354,6 +357,7 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 
 target_include_directories(${PROJECT_NAME}  PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/.. # for our common lwipopts or any other standard includes, if required
   )
 

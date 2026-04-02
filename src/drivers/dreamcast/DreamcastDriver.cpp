@@ -6,6 +6,11 @@
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
 #include "uart_rx.pio.h"
+#include "net/w6100.h"
+extern "C" {
+#include "wizchip_conf.h"
+#include "w6100.h"
+}
 
 // Driver instances indexed by PIO1 RX SM number (matches irqBusInstances in maple_bus.cpp).
 static DreamcastDriver* irqDriverInstances[4] = {};
@@ -545,6 +550,75 @@ void __no_inline_not_in_flash_func(DreamcastDriver::updateCmd9FromNetwork)(uint3
         uint32_t xorAll = p2CachedCrcXorConst ^ w3;
         uint8_t crc = (xorAll >> 24) ^ (xorAll >> 16) ^ (xorAll >> 8) ^ xorAll;
         p2Cmd9ReadyW5 = (uint32_t)crc << 24;
+    }
+}
+
+// ============================================================
+// W6100 Ethernet transport
+// ============================================================
+
+void DreamcastDriver::initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, uint pin_mosi, uint pin_rst) {
+    // Init W6100 — skip version check, just configure and go
+    w6100_init(pin_miso, pin_cs, pin_sclk, pin_mosi, pin_rst);
+    ethernetChipVersion = w6100_get_version();
+
+    uint8_t mac[6] = {0x00, 0x08, 0xDC, 0xDC, 0x00, 0x01};
+    uint8_t ip[4] = {192, 168, 1, 100};
+    uint8_t subnet[4] = {255, 255, 255, 0};
+    uint8_t gateway[4] = {192, 168, 1, 1};
+
+    w6100_set_mac(mac);
+    w6100_set_ip(ip, subnet, gateway);
+
+    if (!w6100_udp_open(4977)) {
+        return;
+    }
+
+    ethernetInitialized = true;
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::pollEthernet)() {
+    if (!ethernetInitialized) return;
+
+    // Drain all pending UDP packets, keep only the latest
+    uint8_t data[4];
+    uint8_t lastData[4] = {0, 0, 0xFF, 0xFF};  // Default: all released
+    bool gotPacket = false;
+
+    while (true) {
+        int len = w6100_udp_recv(data, 4, nullptr, nullptr);
+        if (len < 4) break;
+        memcpy(lastData, data, 4);
+        gotPacket = true;
+        if (enableDiagnostics) netFrameCount++;
+    }
+
+    if (gotPacket) {
+        uint32_t w3 = ((uint32_t)lastData[0] << 24) |
+                      ((uint32_t)lastData[1] << 16) |
+                      ((uint32_t)lastData[2] << 8)  |
+                      (uint32_t)lastData[3];
+        lastNetW3 = w3;
+        lastNetTimestamp = timer_hw->timerawl;
+        hasNetState = true;
+        updateCmd9FromNetwork(w3);
+    }
+
+    // Re-apply latched state or timeout
+    if (hasNetState) {
+        if (timer_hw->timerawl - lastNetTimestamp > 100000) {
+            hasNetState = false;
+        } else if (!gotPacket) {
+            updateCmd9FromNetwork(lastNetW3);
+        }
+    }
+}
+
+void __no_inline_not_in_flash_func(DreamcastDriver::pollNetwork)() {
+    if (ethernetInitialized) {
+        pollEthernet();
+    } else {
+        pollUartRx();
     }
 }
 
