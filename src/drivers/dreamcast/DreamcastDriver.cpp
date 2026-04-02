@@ -596,18 +596,9 @@ void DreamcastDriver::initEthernet(uint pin_miso, uint pin_cs, uint pin_sclk, ui
         return;
     }
 
-    // MapleCast server IP/port — configured via web UI
-    const GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
-    if (opts.maplecastEnabled) {
-        serverIp[0] = opts.maplecastServerIP1;
-        serverIp[1] = opts.maplecastServerIP2;
-        serverIp[2] = opts.maplecastServerIP3;
-        serverIp[3] = opts.maplecastServerIP4;
-        serverPort = opts.maplecastServerPort;
-    } else {
-        serverIp[0] = 0; serverIp[1] = 0; serverIp[2] = 0; serverIp[3] = 0;
-        serverPort = 0;
-    }
+    // MapleCast server — hardcoded for now, web UI config later
+    serverIp[0] = 192; serverIp[1] = 168; serverIp[2] = 1; serverIp[3] = 63;
+    serverPort = 7100;
 
     ethernetInitialized = true;
 }
