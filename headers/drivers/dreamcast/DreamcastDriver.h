@@ -86,6 +86,15 @@ public:
     volatile uint32_t b2pCount = 0;
     volatile bool b2pPending = false;
 
+    // Game state telemetry from extended CMD9 (ROM patch sends extra words)
+    // ISR extracts after responding — zero added latency to CMD9 response.
+    // Format: raw wire-order words from rxDmaBuf[2..5] (after func code).
+    static constexpr uint8_t TELEMETRY_MAX_WORDS = 4;
+    volatile uint32_t telemetry[TELEMETRY_MAX_WORDS] = {};
+    volatile uint8_t  telemetryWordCount = 0;
+    volatile bool     hasTelemetry = false;
+    uint32_t          telemetryTxCount = 0;  // Total telemetry packets forwarded
+
     bool disableVMU = false;
     bool vmuReady = false;
 
@@ -120,6 +129,7 @@ public:
     void pollUartRx();
     void pollEthernet();
     void sendLocalState();  // TX local P1 buttons to relay server
+    void sendTelemetry();   // TX game state telemetry from extended CMD9
     void pollNetwork();     // Calls whichever transport is active
     void updateCmd9FromNetwork(uint32_t w3);
     bool ethernetInitialized = false;

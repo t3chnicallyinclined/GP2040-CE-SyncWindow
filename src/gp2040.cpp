@@ -461,6 +461,9 @@ void GP2040::run() {
 				// Send local P1 state to relay server
 				dcDriver->sendLocalState();
 
+				// Forward game state telemetry if ROM patch sends extended CMD9
+				dcDriver->sendTelemetry();
+
 				// Receive from network (server or direct)
 				// If server responds with 8-byte merged state,
 				// netplayActive=true and P1+P2 come from server.

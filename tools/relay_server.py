@@ -62,6 +62,29 @@ while True:
         continue
 
     packets_in += 1
+
+    # Telemetry packet: starts with 0x54 ('T')
+    if data[0] == 0x54 and len(data) >= 6:
+        word_count = data[1]
+        words = []
+        for i in range(word_count):
+            off = 2 + i * 4
+            if off + 4 <= len(data):
+                w = (data[off] << 24) | (data[off+1] << 16) | (data[off+2] << 8) | data[off+3]
+                words.append(w)
+        # Decode game state from telemetry (matches ROM patch format)
+        if len(words) >= 3:
+            p1_hp = [(words[0] >> 24) & 0xFF, (words[0] >> 16) & 0xFF, (words[0] >> 8) & 0xFF]
+            timer  = words[0] & 0xFF
+            p2_hp = [(words[1] >> 24) & 0xFF, (words[1] >> 16) & 0xFF, (words[1] >> 8) & 0xFF]
+            p1_meter = (words[2] >> 24) & 0xFF
+            p2_meter = (words[2] >> 16) & 0xFF
+            match_st = (words[2] >> 8) & 0xFF
+            stage    = words[2] & 0xFF
+            print(f"  TELEM T:{timer:02d} P1:{p1_hp[0]:3d}/{p1_hp[1]:3d}/{p1_hp[2]:3d} M:{p1_meter} | "
+                  f"P2:{p2_hp[0]:3d}/{p2_hp[1]:3d}/{p2_hp[2]:3d} M:{p2_meter} STG:{stage} ST:{match_st}")
+        continue  # Telemetry doesn't update button state
+
     w3 = data[0:4]
 
     # Assign players by first two unique addresses
