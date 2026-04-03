@@ -104,9 +104,9 @@ def main():
     last_send = time.perf_counter()
     last_stat = last_send
 
-    REFRESH_INTERVAL = 0.008  # 8ms = 120Hz (2x DC poll rate)
+    SEND_INTERVAL = 0.001  # 1ms = 1000Hz — always send, keep state fresh
 
-    print("=== STREAMING ===")
+    print("=== STREAMING (1000Hz) ===")
     try:
         while True:
             pygame.event.pump()
@@ -114,20 +114,14 @@ def main():
             now = time.perf_counter()
 
             if w3 != prev_w3:
-                # State changed — send IMMEDIATELY
-                sock.sendto(w3, dest)
-                prev_w3 = w3
-                sent += 1
                 changes += 1
-                last_send = now
-            elif now - last_send >= REFRESH_INTERVAL:
-                # No change — periodic refresh to keep state fresh
+                prev_w3 = w3
+
+            # ALWAYS send — getInput() drains and keeps latest
+            if now - last_send >= SEND_INTERVAL:
                 sock.sendto(w3, dest)
                 sent += 1
                 last_send = now
-            else:
-                # Nothing to send — yield briefly
-                time.sleep(0.001)
 
             if now - last_stat >= 5.0:
                 rate = sent / (now - last_stat)
