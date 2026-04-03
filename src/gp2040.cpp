@@ -225,6 +225,12 @@ void GP2040::initializeStandardGpio() {
 	    gpOpts.dreamcastPinA < NUM_BANK0_GPIOS &&
 	    gpOpts.dreamcastPinB < NUM_BANK0_GPIOS) {
 		reservedPins |= (1u << gpOpts.dreamcastPinA) | (1u << gpOpts.dreamcastPinB);
+		if (gpOpts.dreamcastP2PinA < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastP2PinA);
+		if (gpOpts.dreamcastP2PinB < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastP2PinB);
+		if (gpOpts.dreamcastUartRxPin < NUM_BANK0_GPIOS)
+			reservedPins |= (1u << gpOpts.dreamcastUartRxPin);
 	}
 
 	for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++)
@@ -358,6 +364,25 @@ void GP2040::run() {
 
 	DreamcastDriver * dcDriver = DriverManager::getInstance().getDCDriver();
 	bool dcMode = (dcDriver != nullptr);
+
+	// P2: second Maple Bus + network input (UART or Ethernet)
+	if (dcMode) {
+		const GamepadOptions& opts = Storage::getInstance().getGamepadOptions();
+
+		// Always try W6100 Ethernet first (auto-detect via SPI version read)
+		// If W6100 not present, falls back to UART
+		dcDriver->initEthernet(16, 17, 18, 19, 20);
+
+		// Fall back to UART if Ethernet not detected and UART pin is configured
+		if (!dcDriver->ethernetInitialized && opts.dreamcastUartRxPin < NUM_BANK0_GPIOS) {
+			dcDriver->initUartRx(opts.dreamcastUartRxPin, 1000000);
+		}
+		if (opts.dreamcastP2PinA < NUM_BANK0_GPIOS &&
+		    opts.dreamcastP2PinB < NUM_BANK0_GPIOS) {
+			dcDriver->initP2(opts.dreamcastP2PinA, opts.dreamcastP2PinB);
+		}
+	}
+
 	bool configMode = false;
 	GPDriver * inputDriver = nullptr;
 
@@ -375,14 +400,15 @@ void GP2040::run() {
 		this->getReinitGamepad(gamepad);
 		memcpy(&prevState, &gamepad->state, sizeof(GamepadState));
 
-		if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
+		if (dcMode) {
+			// DC polls at 60Hz (16.67ms) — switch bounce (1-5ms) settles
+			// long before the next poll. Always use raw passthrough.
+			gamepad->debouncedGpio = ~gpio_get_all();
+			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
+		} else if (Storage::getInstance().getGamepadOptions().nobdSyncDelay > 0) {
 			syncGpioGetAll();
 		} else {
 			debounceGpioGetAll();
-		}
-
-		if (dcMode) {
-			gamepad->setDpadMode(DPAD_MODE_DIGITAL);
 		}
 
 		gamepad->read();
@@ -415,6 +441,7 @@ void GP2040::run() {
 
 		if (dcMode) {
 			dcDriver->process(gamepad);
+			dcDriver->processP2(gamepad);
 		} else {
 			bool processed = inputDriver->process(gamepad);
 			tud_task();
@@ -426,8 +453,21 @@ void GP2040::run() {
 		// DC mode: ISR handles all commands. Main loop just keeps
 		// lookup table + analog current and does ISR TX cleanup.
 		if (dcMode) {
-			dcDriver->updateCmd9FromGpio();
+			// P1: always read physical buttons into lookup table
+			dcDriver->updateCmd9FromGpio(gamepad->debouncedGpio);
 			dcDriver->updateAnalogFromGamepad(gamepad);
+
+			if (dcDriver->ethernetInitialized) {
+				// Send local P1 state to relay server
+				dcDriver->sendLocalState();
+
+				// Receive from network (server or direct)
+				// If server responds with 8-byte merged state,
+				// netplayActive=true and P1+P2 come from server.
+				// If server stops responding, netplayActive auto-disables
+				// and P1 stays on local GPIO (set above).
+				dcDriver->pollNetwork();
+			}
 		}
 	}
 }

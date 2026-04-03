@@ -18,6 +18,8 @@ public:
     }
     GPDriver * getDriver() { return driver; }
     DreamcastDriver * getDCDriver() { return dcDriver; }
+    DreamcastDriver * getDCDriverP2() { return dcDriverP2; }
+    void setDCDriverP2(DreamcastDriver* p2) { dcDriverP2 = p2; }
     // Returns a VMU instance regardless of current input mode.
     // In Dreamcast mode: returns the live driver's VMU.
     // In webconfig mode: returns a static standalone VMU (for flash access only).
@@ -29,6 +31,7 @@ private:
     DriverManager() {}
     GPDriver * driver;
     DreamcastDriver * dcDriver = nullptr;
+    DreamcastDriver * dcDriverP2 = nullptr;
     InputMode inputMode;
 };
 

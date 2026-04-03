@@ -3,6 +3,8 @@ import { Button, Form, Row, Col, FormLabel, Tab, Tabs } from 'react-bootstrap';
 import { Formik, useFormikContext, Field } from 'formik';
 import chunk from 'lodash/chunk';
 import * as yup from 'yup';
+import LayoutPreview from '../Components/LayoutPreview';
+import { leftLayouts, rightLayouts } from '../Data/ButtonLayoutData';
 import { Trans, useTranslation } from 'react-i18next';
 import { NavLink } from 'react-router-dom';
 
@@ -414,6 +416,33 @@ export default function DisplayConfigPage() {
 													</option>
 												))}
 											</FormSelect>
+										</Row>
+										{/* Live preview of selected layouts */}
+										<Row className="mb-3">
+											<Col sm={6} className="d-flex justify-content-center">
+												{(() => {
+													const selectedLeft = Object.keys(buttonLayoutDefinitions.buttonLayout).find(
+														k => buttonLayoutDefinitions.buttonLayout[k] === parseInt(values.buttonLayout)
+													);
+													const elements = selectedLeft ? leftLayouts[selectedLeft] : null;
+													return elements ? (
+														<LayoutPreview elements={elements} width={192} height={96} label="Left Layout" selected />
+													) : null;
+												})()}
+											</Col>
+											<Col sm={6} className="d-flex justify-content-center">
+												{(() => {
+													const selectedRight = Object.keys(buttonLayoutDefinitions.buttonLayoutRight).find(
+														k => buttonLayoutDefinitions.buttonLayoutRight[k] === parseInt(values.buttonLayoutRight)
+													);
+													const elements = selectedRight ? rightLayouts[selectedRight] : null;
+													return elements ? (
+														<LayoutPreview elements={elements} width={192} height={96} label="Right Layout" selected />
+													) : null;
+												})()}
+											</Col>
+										</Row>
+										<Row className="mb-4">
 											<FormSelect
 												label={t(
 													'DisplayConfig:form.button-layout-orientation',

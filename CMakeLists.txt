@@ -45,7 +45,7 @@ execute_process(COMMAND ${GIT_EXECUTABLE} describe --always --abbrev=7
 string(REGEX REPLACE "v([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" CMAKE_GIT_REPO_VERSION ${GIT_REPO_VERSION})
 string(REGEX REPLACE "^(.......-.*)|(.......)$" "0.0.0" CMAKE_GIT_REPO_VERSION ${CMAKE_GIT_REPO_VERSION}) # fix if all we have is the git SHA
 # NOBD Release Version — update this number before each release build
-set(NOBD_RELEASE "20")
+set(NOBD_RELEASE "21")
 set(GIT_REPO_VERSION "v${CMAKE_GIT_REPO_VERSION}-nobd-${NOBD_RELEASE}")
 
 configure_file("headers/version.h.in" "headers/version.h")
@@ -211,6 +211,7 @@ src/drivers/xinput/XInputDriver.cpp
 src/drivers/dreamcast/maple_bus.cpp
 src/drivers/dreamcast/DreamcastDriver.cpp
 src/drivers/dreamcast/DreamcastVMU.cpp
+src/net/w6100.cpp
 src/interfaces/i2c/i2cdevicebase.cpp
 src/interfaces/i2c/pcf8575/pcf8575.cpp
 src/interfaces/i2c/ssd1306/obd_ssd1306.cpp
@@ -289,6 +290,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${PROJECT_NAME}_${C
 
 # Generate PIO header for Dreamcast Maple Bus
 pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/src/drivers/dreamcast/maple.pio)
+pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/src/net/uart_rx.pio)
 
 pico_set_program_name(${PROJECT_NAME} "GP2040-CE-NOBD")
 pico_set_program_version(${PROJECT_NAME} ${GIT_REPO_VERSION})
@@ -310,6 +312,8 @@ hardware_adc
 hardware_pwm
 hardware_pio
 hardware_dma
+hardware_spi
+ioLibrary_Driver
 PicoPeripherals
 WiiExtension
 SNESpad
@@ -353,6 +357,7 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
 
 target_include_directories(${PROJECT_NAME}  PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}/src
     ${CMAKE_CURRENT_LIST_DIR}/.. # for our common lwipopts or any other standard includes, if required
   )
 

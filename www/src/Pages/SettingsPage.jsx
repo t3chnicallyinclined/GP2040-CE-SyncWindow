@@ -461,6 +461,16 @@ const schema = yup.object().shape({
 	nobdReleaseDebounce: yup.number().label('NOBD Release Debounce'),
 	dreamcastPinA: yup.number().min(0).max(29).label('Dreamcast Pin A'),
 	dreamcastPinB: yup.number().min(0).max(29).label('Dreamcast Pin B'),
+	dreamcastP2PinA: yup.number().min(0).max(255).label('Dreamcast P2 Pin A'),
+	dreamcastP2PinB: yup.number().min(0).max(255).label('Dreamcast P2 Pin B'),
+	dreamcastUartRxPin: yup.number().min(0).max(255).label('Dreamcast UART RX Pin'),
+	maplecastEnabled: yup.number().label('MapleCast Enabled'),
+	maplecastServerIP1: yup.number().min(0).max(255).label('MapleCast IP 1'),
+	maplecastServerIP2: yup.number().min(0).max(255).label('MapleCast IP 2'),
+	maplecastServerIP3: yup.number().min(0).max(255).label('MapleCast IP 3'),
+	maplecastServerIP4: yup.number().min(0).max(255).label('MapleCast IP 4'),
+	maplecastServerPort: yup.number().min(1).max(65535).label('MapleCast Port'),
+	maplecastPlayerSlot: yup.number().min(0).max(1).label('MapleCast Player'),
 	// dcSyncMode: removed from UI — always Off (raw passthrough like real DC hardware)
 	// zeroLatencyMode: removed — ISR handles all DC commands, always on
 	miniMenuGamepadInput: yup.number().required().label('Mini Menu'),
@@ -1604,6 +1614,114 @@ export default function SettingsPage() {
 															</ul>
 															<span className="text-danger">{t('SettingsPage:dreamcast-pins-warning')}</span>
 														</div>
+														<hr className="my-3" />
+														<p className="mb-2"><strong>{t('SettingsPage:dreamcast-p2-section-title')}</strong></p>
+														<p className="text-muted mb-2" style={{fontSize: '0.85em'}}>
+															{t('SettingsPage:dreamcast-p2-section-desc')}
+														</p>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-p2-pin-a-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastP2PinA"
+																	className="form-control-sm"
+																	value={values.dreamcastP2PinA}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-p2-pin-b-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastP2PinB"
+																	className="form-control-sm"
+																	value={values.dreamcastP2PinB}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														<Form.Group className="row mb-3">
+															<Form.Label>
+																{t('SettingsPage:dreamcast-uart-rx-label')}
+															</Form.Label>
+															<Col sm={3}>
+																<Form.Control
+																	type="number"
+																	name="dreamcastUartRxPin"
+																	className="form-control-sm"
+																	value={values.dreamcastUartRxPin}
+																	onChange={handleChange}
+																	min={0}
+																	max={255}
+																/>
+															</Col>
+														</Form.Group>
+														{(values.dreamcastP2PinA < 255 && values.dreamcastP2PinB < 255) && (
+															<div className="alert alert-info mb-3" style={{fontSize: '0.85em'}}>
+																{t('SettingsPage:dreamcast-p2-enabled-note')}
+															</div>
+														)}
+														<hr className="my-3" />
+														<p className="mb-2"><strong>{t('SettingsPage:maplecast-section-title')}</strong></p>
+														<p className="text-muted mb-2" style={{fontSize: '0.85em'}}>
+															{t('SettingsPage:maplecast-section-desc')}
+														</p>
+														<Form.Group className="row mb-3">
+															<Form.Label>{t('SettingsPage:maplecast-enabled-label')}</Form.Label>
+															<Col sm={3}>
+																<Form.Check
+																	type="switch"
+																	name="maplecastEnabled"
+																	checked={!!values.maplecastEnabled}
+																	onChange={(e) => handleChange({target: {name: 'maplecastEnabled', value: e.target.checked ? 1 : 0}})}
+																/>
+															</Col>
+														</Form.Group>
+														{!!values.maplecastEnabled && (
+														<>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-server-ip-label')}</Form.Label>
+																<Col sm={8}>
+																	<div className="d-flex gap-1 align-items-center">
+																		<Form.Control type="number" name="maplecastServerIP1" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP1} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP2" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP2} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP3" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP3} onChange={handleChange} min={0} max={255} />
+																		<span>.</span>
+																		<Form.Control type="number" name="maplecastServerIP4" className="form-control-sm" style={{width: '70px'}} value={values.maplecastServerIP4} onChange={handleChange} min={0} max={255} />
+																	</div>
+																</Col>
+															</Form.Group>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-server-port-label')}</Form.Label>
+																<Col sm={3}>
+																	<Form.Control type="number" name="maplecastServerPort" className="form-control-sm" value={values.maplecastServerPort} onChange={handleChange} min={1} max={65535} />
+																</Col>
+															</Form.Group>
+															<Form.Group className="row mb-3">
+																<Form.Label>{t('SettingsPage:maplecast-player-label')}</Form.Label>
+																<Col sm={3}>
+																	<Form.Select name="maplecastPlayerSlot" className="form-control-sm" value={values.maplecastPlayerSlot} onChange={handleChange}>
+																		<option value={0}>Player 1</option>
+																		<option value={1}>Player 2</option>
+																	</Form.Select>
+																</Col>
+															</Form.Group>
+														</>
+														)}
+														<hr className="my-3" />
 														<Form.Group className="row mb-3">
 															<Col>
 																<p className="mb-1"><strong>{t('SettingsPage:vmu-manager-label')}</strong></p>
@@ -1756,6 +1874,34 @@ export default function SettingsPage() {
 															</Form.Select>
 														</Col>
 													</Form.Group>
+													{values.inputMode === 16 && (
+													<div className="alert alert-info mb-3">
+														{t('SettingsPage:dreamcast-zl-forced-info')}
+													</div>
+													)}
+													<Form.Group className="row mb-3">
+														<Col sm={8}>
+															<Form.Check
+																label={t('SettingsPage:input-timing-zl-label')}
+																type="switch"
+																id="zeroLatencyMode"
+																isInvalid={false}
+																checked={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
+																disabled={values.inputMode === 16}
+																onChange={(e) => {
+																	if (e.target.checked) {
+																		setFieldValue('nobdSyncDelay', 0);
+																		setFieldValue('debounceDelay', 0);
+																	} else {
+																		setFieldValue('debounceDelay', 5);
+																	}
+																}}
+															/>
+															<Form.Text muted>
+																{t('SettingsPage:input-timing-zl-hint')}
+															</Form.Text>
+														</Col>
+													</Form.Group>
 													<Form.Group className="row mb-3">
 														<Form.Label>
 															{t('SettingsPage:input-timing-mode-label')}
@@ -1765,12 +1911,14 @@ export default function SettingsPage() {
 																name="inputTimingMode"
 																className="form-select-sm"
 																value={values.nobdSyncDelay > 0 ? 'nobd' : 'stock'}
-
+																disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																onChange={(e) => {
 																	if (e.target.value === 'stock') {
 																		setFieldValue('nobdSyncDelay', 0);
+																		setFieldValue('debounceDelay', 5);
 																	} else {
 																		setFieldValue('nobdSyncDelay', 5);
+																		setFieldValue('debounceDelay', 0);
 																	}
 																}}
 															>
@@ -1779,11 +1927,6 @@ export default function SettingsPage() {
 															</Form.Select>
 														</Col>
 													</Form.Group>
-														{values.inputMode === 16 && (
-															<Form.Text muted>
-																{t('SettingsPage:dreamcast-debounce-hint')}
-															</Form.Text>
-														)}
 													<Form.Group className="row mb-3">
 														<Form.Label>
 															{values.nobdSyncDelay > 0
@@ -1799,7 +1942,7 @@ export default function SettingsPage() {
 																	value={values.nobdSyncDelay}
 																	error={errors.nobdSyncDelay}
 																	isInvalid={errors.nobdSyncDelay}
-	
+																	disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																	onChange={handleChange}
 																	min={1}
 																	max={500}
@@ -1812,7 +1955,7 @@ export default function SettingsPage() {
 																	value={values.debounceDelay}
 																	error={errors.debounceDelay}
 																	isInvalid={errors.debounceDelay}
-	
+																	disabled={values.inputMode === 16 || (values.nobdSyncDelay === 0 && values.debounceDelay === 0)}
 																	onChange={handleChange}
 																	min={0}
 																	max={5000}
@@ -1820,7 +1963,14 @@ export default function SettingsPage() {
 															)}
 														</Col>
 													</Form.Group>
-													{values.nobdSyncDelay > 0 && (
+													{values.inputMode !== 16 && (
+													<Form.Text muted>
+														{values.nobdSyncDelay > 0
+															? t('SettingsPage:input-timing-nobd-hint')
+															: t('SettingsPage:input-timing-stock-hint')}
+													</Form.Text>
+													)}
+													{values.nobdSyncDelay > 0 && values.inputMode !== 16 && (
 													<Form.Group className="row mb-3">
 														<Col sm={8}>
 															<Form.Check
